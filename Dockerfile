@@ -1,10 +1,9 @@
-# Étape 1: Builder l'application
+# Étape 1 : Builder l'application
 FROM python:3.10-slim-bullseye as builder
 
 # Variables d'environnement
 ENV PYTHONDONTWRITEBYTECODE 1
 ENV PYTHONUNBUFFERED 1
-ENV PIP_NO_CACHE_DIR=off
 
 # Mise à jour système et installation des dépendances système
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -19,10 +18,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Installation des dépendances Python
 WORKDIR /app
 COPY requirements.txt .
-RUN pip install --upgrade pip && \
-    pip install --user -r requirements.txt
 
-# Étape 2: Image finale d'exécution
+RUN pip install --upgrade pip && \
+    pip install -r requirements.txt
+
+# Étape 2 : Image finale d'exécution
 FROM python:3.10-slim-bullseye
 
 # Installation des dépendances système légères
@@ -31,19 +31,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Copie des fichiers de l'application
+# Création du répertoire de l'application
 WORKDIR /app
-COPY --from=builder /root/.local /root/.local
+
+# Copie des dépendances installées depuis le builder
+COPY --from=builder /usr/local/lib/python3.10/site-packages /usr/local/lib/python3.10/site-packages
+COPY --from=builder /usr/local/bin /usr/local/bin
+
+# Copie du code source
 COPY . .
 
-# Configuration de l'environnement
-ENV PATH=/root/.local/bin:$PATH
-ENV PYTHONPATH=/app
-ENV FLASK_APP=app.py
-ENV FLASK_ENV=production
-ENV FLASK_RUN_HOST=0.0.0.0
-ENV FLASK_RUN_PORT=5000
+# Exposition du port
+EXPOSE 8000
 
-# Exposition du port et commande de démarrage
-EXPOSE 5000
-CMD ["gunicorn main:app --workers 4 --worker-class uvicorn.workers.UvicornWorker --bind 0.0.0.0:8000"]
+# Commande de démarrage
+CMD ["gunicorn", "main:app", "--workers", "4", "--worker-class", "uvicorn.workers.UvicornWorker", "--bind", "0.0.0.0:8000"]
