@@ -9,20 +9,51 @@
     --dark-bg: #111827;
     --card-light: #ffffff;
     --card-dark: #1f2937;
+    --border-light: #e5e7eb;
+    --border-dark: #374151;
 }
 
 .dark {
     color-scheme: dark;
 }
 
+* {
+    box-sizing: border-box;
+}
+
+body {
+    font-family: 'Inter', sans-serif;
+    background-color: var(--light-bg);
+    color: #1f2937;
+    transition: background-color 0.3s, color 0.3s;
+}
+
+.dark body {
+    background-color: var(--dark-bg);
+    color: #f9fafb;
+}
+
 .torrent-card {
     transition: all 0.3s ease;
-    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
+    border: 1px solid var(--border-light);
+    border-radius: 12px;
+    overflow: hidden;
+    background-color: var(--card-light);
+    margin-bottom: 5px;
+}
+.torrent-card i {
+    padding: 5px 10px;
+}
+
+.dark .torrent-card {
+    border-color: var(--border-dark);
+    background-color: var(--card-dark);
 }
 
 .torrent-card:hover {
     transform: translateY(-5px);
-    box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.2), 0 4px 6px -4px rgba(0, 0, 0, 0.2);
+    box-shadow: 0 10px 15px -3px rgba(79, 70, 229, 0.2), 0 4px 6px -4px rgba(79, 70, 229, 0.2);
     border-color: rgba(79, 70, 229, 0.5);
 }
 
@@ -30,12 +61,18 @@
     transition: all 0.3s ease;
     background: rgba(255, 255, 255, 0.1);
     backdrop-filter: blur(10px);
-    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.15);
+    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
+    border: 1px solid var(--border-light);
+}
+
+.dark .search-input {
+    border-color: var(--border-dark);
 }
 
 .search-input:focus {
-    box-shadow: 0 4px 20px rgba(79, 70, 229, 0.4);
+    box-shadow: 0 4px 20px rgba(79, 70, 229, 0.2);
     background: rgba(255, 255, 255, 0.15);
+    border-color: rgba(79, 70, 229, 0.5);
 }
 
 .page-btn {
@@ -46,11 +83,22 @@
     background-color: var(--primary) !important;
     color: white !important;
 }
+.magnet-btn, .torrent-btn {
+    transition: all 0.2s ease;
+    /* display: inline-flex; */
+    align-items: center;
+    justify-content: center;
+    padding: 0.5rem 1rem;
+    border-radius: 8px;
+    font-weight: 500;
+    font-size: 0.875rem;
+    margin: 0 0.5rem;
+}
 
 .skeleton-loader {
     animation: pulse 2s infinite;
     background-color: #e5e7eb;
-    border-radius: 0.5rem;
+    border-radius: 12px;
 }
 
 .dark .skeleton-loader {
@@ -62,35 +110,132 @@
     50% { opacity: 0.5; }
 }
 
+.infinite-scroll {
+    display: flex;
+    overflow-x: auto;
+    scroll-snap-type: x mandatory;
+    scroll-behavior: smooth;
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+    padding-bottom: 20px;
+}
+
+.infinite-scroll::-webkit-scrollbar {
+    display: none;
+}
+
+.scroll-item {
+    scroll-snap-align: start;
+    flex: 0 0 auto;
+    width: 300px;
+    margin-right: 20px;
+}
+
+.language-flag {
+    font-size: 1.5rem;
+    margin-right: 8px;
+}
+
+.detail-box {
+    border-radius: 12px;
+    border: 1px solid var(--border-light);
+    background-color: var(--card-light);
+}
+
+.dark .detail-box {
+    border-color: var(--border-dark);
+    background-color: var(--card-dark);
+}
+
+/* Animations */
+@keyframes fadeIn {
+    from { opacity: 0; transform: translateY(10px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+.animate-fadeIn {
+    animation: fadeIn 0.5s ease-out;
+}
+
 @media (max-width: 640px) {
     .torrent-card .flex-col {
         gap: 1rem;
     }
-    
+    .torrent-card{
+        flex-direction: column;
+    }
+
     .torrent-card .flex {
         flex-direction: column;
         align-items: flex-start;
     }
-    
+
     .torrent-card .flex-space-x-2 {
         width: 100%;
     }
-    
+
     .magnet-btn, .torrent-btn {
         width: 100%;
         margin-bottom: 0.5rem;
     }
-    
+
     .pagination {
         flex-wrap: wrap;
         justify-content: center;
         gap: 0.5rem;
         margin-top: 1.5rem;
     }
-    
+
     .page-btn {
         width: 40px;
         height: 40px;
         font-size: 0.875rem;
+    }
+
+    .scroll-item {
+        width: 280px;
+    }
+}
+
+/* Ajouter à votre fichier CSS */
+.detail-box:hover {
+    transform: translateY(-5px);
+    border-color: rgba(99, 102, 241, 0.3);
+}
+
+.search-input:focus {
+    box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.25);
+}
+
+#search-suggestions {
+    z-index: 100;
+    animation: fadeIn 0.2s ease-out;
+}
+
+@keyframes fadeIn {
+    from { opacity: 0; transform: translateY(-10px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+/* Animation du logo */
+@keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.8; }
+}
+
+.fa-bolt {
+    animation: pulse 2s infinite;
+}
+
+/* Responsive ajustements */
+@media (max-width: 768px) {
+    .grid-cols-4 {
+        grid-template-columns: repeat(2, 1fr);
+    }
+}
+
+@media (max-width: 480px) {
+    .grid-cols-4 {
+        grid-template-columns: 1fr;
     }
 }

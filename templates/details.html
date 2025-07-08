@@ -1,0 +1,129 @@
+{% extends "base.html" %}
+
+{% block title %}Détails - {{ torrent.title }}{% endblock %}
+
+{% block content %}
+<header class="bg-gradient-to-r from-indigo-600 to-purple-600 py-5 shadow-xl sticky top-0 z-50">
+    <div class="container mx-auto px-4">
+        <div class="flex flex-col md:flex-row justify-between items-center gap-4">
+            <div class="flex items-center">
+                <i class="fas fa-bolt text-3xl text-white mr-3"></i>
+                <a href="{{ base_uri }}" class="text-3xl font-bold text-white">TorrentFlow</a>
+            </div>
+            
+            <div class="w-full md:w-1/2">
+                <a href="{{ base_uri }}" class="search-btn bg-indigo-700 hover:bg-indigo-800 text-white py-3 px-6 rounded-xl font-semibold inline-block">
+                    <i class="fas fa-arrow-left mr-2"></i> Retour
+                </a>
+            </div>
+            
+            <div class="flex items-center space-x-4">
+                <label class="relative inline-flex items-center cursor-pointer">
+                    <input type="checkbox" id="darkModeToggle" class="sr-only peer" onclick="toggleDarkMode()" {% if dark_mode %}checked{% endif %}>
+                    <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 dark:peer-focus:ring-blue-800 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-blue-600"></div>
+                    <span class="ml-3 text-sm font-medium text-white">
+                        <i class="fas {% if dark_mode %}fa-sun{% else %}fa-moon{% endif %}"></i>
+                    </span>
+                </label>
+            </div>
+        </div>
+    </div>
+</header>
+
+<main class="flex-grow py-8">
+    <div class="container mx-auto px-4">
+        <div class="bg-white dark:bg-gray-800 rounded-2xl shadow-xl p-6 mb-8 border border-indigo-500/20">
+            <div class="flex flex-col md:flex-row justify-between items-start md:items-center mb-6">
+                <h2 class="text-2xl font-bold text-gray-900 dark:text-white mb-4 md:mb-0">
+                    {{ torrent.title }}
+                </h2>
+                
+                <div class="flex items-center space-x-3">
+                    <span class="text-indigo-600 dark:text-indigo-400 font-semibold text-lg">{{ torrent.size }}</span>
+                    <span class="text-2xl">{{ torrent.language_flag }}</span>
+                </div>
+            </div>
+            
+            <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                <div class="lg:col-span-2">
+                    <div class="mb-6">
+                        <h3 class="text-lg font-bold text-gray-900 dark:text-white mb-3">Informations</h3>
+                        <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+                            <div class="detail-box p-4 rounded-xl">
+                                <div class="text-gray-600 dark:text-gray-300 mb-1">Seeders</div>
+                                <div class="text-2xl font-bold text-green-600 dark:text-green-400">{{ torrent.seeders }}</div>
+                            </div>
+                            <div class="detail-box p-4 rounded-xl">
+                                <div class="text-gray-600 dark:text-gray-300 mb-1">Leechers</div>
+                                <div class="text-2xl font-bold text-yellow-600 dark:text-yellow-400">{{ torrent.leechers }}</div>
+                            </div>
+                            <div class="detail-box p-4 rounded-xl">
+                                <div class="text-gray-600 dark:text-gray-300 mb-1">Complétés</div>
+                                <div class="text-2xl font-bold text-blue-600 dark:text-blue-400">{{ torrent.completed }}</div>
+                            </div>
+                            <div class="detail-box p-4 rounded-xl">
+                                <div class="text-gray-600 dark:text-gray-300 mb-1">Langue</div>
+                                <div class="text-2xl font-bold">{{ torrent.language.name }}</div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="mb-6">
+                        <h3 class="text-lg font-bold text-gray-900 dark:text-white mb-3">Catégorie</h3>
+                        <div class="detail-box p-4 rounded-xl">
+                            <span class="inline-block bg-indigo-100 dark:bg-indigo-900 text-indigo-700 dark:text-indigo-300 text-sm font-semibold px-3 py-1 rounded-full">
+                                {{ torrent.category }}
+                            </span>
+                        </div>
+                    </div>
+                    
+                    <div class="mb-6">
+                        <h3 class="text-lg font-bold text-gray-900 dark:text-white mb-3">Date de publication</h3>
+                        <div class="detail-box p-4 rounded-xl">
+                            <div class="flex items-center">
+                                <i class="far fa-clock text-purple-500 mr-2"></i>
+                                <span>{{ torrent.pub_date }}</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="lg:col-span-1">
+                    <div class="sticky top-24">
+                        <div class="detail-box rounded-xl p-6">
+                            <h3 class="text-lg font-bold text-gray-900 dark:text-white mb-4">Télécharger</h3>
+                            
+                            <div class="flex flex-col space-y-3">
+                                <a href="{{ torrent.magnet }}"
+                                    class="magnet-btn flex items-center justify-center px-4 py-3 rounded-xl font-medium bg-indigo-600 hover:bg-indigo-700 text-white transition-colors hover:scale-[1.02] text-center">
+                                    <i class="fas fa-magnet mr-2"></i> Lien Magnet
+                                </a>
+                                
+                                <a href="{{ torrent.link }}"
+                                    class="torrent-btn flex items-center justify-center px-4 py-3 rounded-xl font-medium bg-emerald-600 hover:bg-emerald-700 text-white transition-colors hover:scale-[1.02] text-center">
+                                    <i class="fas fa-download mr-2"></i> Fichier Torrent
+                                </a>
+                            </div>
+                            
+                            <div class="mt-6 pt-6 border-t border-gray-300 dark:border-gray-600">
+                                <h3 class="text-lg font-bold text-gray-900 dark:text-white mb-3">Hash</h3>
+                                <div class="detail-box p-4 rounded-xl font-mono text-sm break-all">
+                                    {{ torrent.infohash }}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</main>
+
+<footer class="bg-gray-800 border-t border-gray-700 py-8 mt-auto">
+    <div class="container mx-auto px-4">
+        <div class="border-t border-gray-700 pt-8 text-center text-gray-500">
+            <p>© 2023 TorrentFlow</p>
+        </div>
+    </div>
+</footer>
+{% endblock %}
