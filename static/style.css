@@ -1,0 +1,96 @@
+:root {
+    --primary: #4f46e5;
+    --primary-hover: #4338ca;
+    --secondary: #6b7280;
+    --success: #10b981;
+    --warning: #f59e0b;
+    --danger: #ef4444;
+    --light-bg: #f9fafb;
+    --dark-bg: #111827;
+    --card-light: #ffffff;
+    --card-dark: #1f2937;
+}
+
+.dark {
+    color-scheme: dark;
+}
+
+.torrent-card {
+    transition: all 0.3s ease;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+}
+
+.torrent-card:hover {
+    transform: translateY(-5px);
+    box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.2), 0 4px 6px -4px rgba(0, 0, 0, 0.2);
+    border-color: rgba(79, 70, 229, 0.5);
+}
+
+.search-input {
+    transition: all 0.3s ease;
+    background: rgba(255, 255, 255, 0.1);
+    backdrop-filter: blur(10px);
+    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.15);
+}
+
+.search-input:focus {
+    box-shadow: 0 4px 20px rgba(79, 70, 229, 0.4);
+    background: rgba(255, 255, 255, 0.15);
+}
+
+.page-btn {
+    transition: all 0.2s ease;
+}
+
+.page-btn:not(.opacity-50):hover {
+    background-color: var(--primary) !important;
+    color: white !important;
+}
+
+.skeleton-loader {
+    animation: pulse 2s infinite;
+    background-color: #e5e7eb;
+    border-radius: 0.5rem;
+}
+
+.dark .skeleton-loader {
+    background-color: #374151;
+}
+
+@keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+}
+
+@media (max-width: 640px) {
+    .torrent-card .flex-col {
+        gap: 1rem;
+    }
+    
+    .torrent-card .flex {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+    
+    .torrent-card .flex-space-x-2 {
+        width: 100%;
+    }
+    
+    .magnet-btn, .torrent-btn {
+        width: 100%;
+        margin-bottom: 0.5rem;
+    }
+    
+    .pagination {
+        flex-wrap: wrap;
+        justify-content: center;
+        gap: 0.5rem;
+        margin-top: 1.5rem;
+    }
+    
+    .page-btn {
+        width: 40px;
+        height: 40px;
+        font-size: 0.875rem;
+    }
+}

@@ -1,0 +1,98 @@
+<!-- templates/results_partial.html -->
+<div id="search-results">
+    {% if torrents %}
+    {% for torrent in torrents %}
+    <div
+        class="torrent-card bg-white dark:bg-gray-700 rounded-xl overflow-hidden mb-4 border border-gray-300 dark:border-gray-600 transition-all duration-300 hover:border-indigo-500 hover:shadow-xl">
+        <div class="p-5">
+            <div class="flex justify-between items-start mb-3">
+                <div class="flex-1 min-w-0">
+                    <span
+                        class="inline-block bg-indigo-100 dark:bg-indigo-900 text-indigo-700 dark:text-indigo-300 text-xs font-semibold px-3 py-1 rounded-full mb-2">
+                        {{ torrent.category }}
+                    </span>
+                    <h3 class="text-lg font-bold text-gray-900 dark:text-white truncate">{{ torrent.title }}</h3>
+                </div>
+                <span class="text-gray-600 dark:text-gray-300 text-sm whitespace-nowrap pl-2">{{ torrent.size }}</span>
+            </div>
+
+            <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+                <div class="flex flex-wrap gap-4 text-sm">
+                    <div class="flex items-center">
+                        <i class="fas fa-upload text-green-500 mr-1"></i>
+                        <span class="text-gray-900 dark:text-white">{{ torrent.seeders }}</span>
+                        <span class="text-gray-600 dark:text-gray-400 ml-1">seeders</span>
+                    </div>
+                    <div class="flex items-center">
+                        <i class="fas fa-download text-yellow-500 mr-1"></i>
+                        <span class="text-gray-900 dark:text-white">{{ torrent.leechers }}</span>
+                        <span class="text-gray-600 dark:text-gray-400 ml-1">leechers</span>
+                    </div>
+                    <div class="flex items-center">
+                        <i class="fas fa-check-circle text-blue-500 mr-1"></i>
+                        <span class="text-gray-900 dark:text-white">{{ torrent.completed }}</span>
+                        <span class="text-gray-600 dark:text-gray-400 ml-1">completés</span>
+                    </div>
+                    <div class="flex items-center">
+                        <i class="far fa-clock text-purple-500 mr-1"></i>
+                        <span class="text-gray-600 dark:text-gray-400">{{ torrent.pub_date }}</span>
+                    </div>
+                </div>
+
+                <div class="flex flex-col space-y-2 w-full sm:w-auto">
+                    <a href="{{ torrent.magnet }}"
+                        class="magnet-btn flex items-center justify-center px-4 py-2 rounded-lg font-medium bg-indigo-600 hover:bg-indigo-700 text-white transition-colors w-full text-sm"
+                        target="_blank">
+                        <i class="fas fa-magnet mr-2"></i> Magnet
+                    </a>
+                    <a href="{{ torrent.link }}"
+                        class="torrent-btn flex items-center justify-center px-4 py-2 rounded-lg font-medium bg-emerald-600 hover:bg-emerald-700 text-white transition-colors w-full text-sm"
+                        target="_blank">
+                        <i class="fas fa-download mr-2"></i> Télécharger
+                    </a>
+                </div>
+
+
+            </div>
+        </div>
+    </div>
+    {% endfor %}
+    {% else %}
+    <div class="text-center py-12 bg-white dark:bg-gray-700 rounded-xl">
+        <i class="fas fa-cloud-download-alt text-5xl text-indigo-500 mb-4"></i>
+        <h3 class="text-2xl font-bold text-gray-900 dark:text-white mb-2">Aucun résultat trouvé</h3>
+        <p class="text-gray-600 dark:text-gray-400">Essayez de modifier vos critères de recherche.</p>
+    </div>
+    {% endif %}
+</div>
+
+{% if total_pages > 1 %}
+<div class="pagination flex justify-center mt-8 space-x-2">
+    <a href="{{ request.url.include_query_params(page=1) }}"
+        class="page-btn w-12 h-12 flex items-center justify-center rounded-xl bg-white dark:bg-gray-700 text-gray-900 dark:text-white hover:bg-indigo-600 hover:text-white {% if page == 1 %}opacity-50 cursor-not-allowed{% endif %}">
+        <i class="fas fa-angle-double-left"></i>
+    </a>
+
+    <a href="{{ request.url.include_query_params(page=page-1) }}"
+        class="page-btn w-12 h-12 flex items-center justify-center rounded-xl bg-white dark:bg-gray-700 text-gray-900 dark:text-white hover:bg-indigo-600 hover:text-white {% if page == 1 %}opacity-50 cursor-not-allowed{% endif %}">
+        <i class="fas fa-angle-left"></i>
+    </a>
+
+    {% for p in page_range %}
+    <a href="{{ request.url.include_query_params(page=p) }}"
+        class="page-btn w-12 h-12 flex items-center justify-center rounded-xl {% if p == page %}bg-indigo-600 text-white{% else %}bg-white dark:bg-gray-700 text-gray-900 dark:text-white hover:bg-gray-200 dark:hover:bg-gray-600{% endif %}">
+        {{ p }}
+    </a>
+    {% endfor %}
+
+    <a href="{{ request.url.include_query_params(page=page+1) }}"
+        class="page-btn w-12 h-12 flex items-center justify-center rounded-xl bg-white dark:bg-gray-700 text-gray-900 dark:text-white hover:bg-indigo-600 hover:text-white {% if page == total_pages %}opacity-50 cursor-not-allowed{% endif %}">
+        <i class="fas fa-angle-right"></i>
+    </a>
+
+    <a href="{{ request.url.include_query_params(page=total_pages) }}"
+        class="page-btn w-12 h-12 flex items-center justify-center rounded-xl bg-white dark:bg-gray-700 text-gray-900 dark:text-white hover:bg-indigo-600 hover:text-white {% if page == total_pages %}opacity-50 cursor-not-allowed{% endif %}">
+        <i class="fas fa-angle-double-right"></i>
+    </a>
+</div>
+{% endif %}

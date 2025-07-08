@@ -12,6 +12,7 @@ build/
 develop-eggs/
 dist/
 downloads/
+node_modules/
 eggs/
 .eggs/
 lib/
@@ -50,6 +51,7 @@ coverage.xml
 .hypothesis/
 .pytest_cache/
 cover/
+
 
 # Translations
 *.mo

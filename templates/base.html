@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="fr" class="">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>{% block title %}TorrentFlow{% endblock %}</title>
+
+  <!-- Tailwind -->
+    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+
+  <!-- Font Awesome -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+
+  <!-- Styles personnalisés -->
+  <link rel="stylesheet" href="/static/style.css">
+
+  <script>
+    // Gestion du mode sombre
+    function applyDarkMode() {
+      const darkMode = localStorage.getItem('darkMode') === 'true' || 
+                      (window.matchMedia('(prefers-color-scheme: dark)').matches && 
+                      localStorage.getItem('darkMode') === null);
+      if (darkMode) {
+        document.documentElement.classList.add('dark');
+        const toggle = document.getElementById('darkModeToggle');
+        if (toggle) toggle.checked = true;
+      } else {
+        document.documentElement.classList.remove('dark');
+        const toggle = document.getElementById('darkModeToggle');
+        if (toggle) toggle.checked = false;
+      }
+      document.cookie = `dark_mode=${darkMode}; path=/; max-age=31536000`;
+    }
+
+    document.addEventListener('DOMContentLoaded', applyDarkMode);
+
+    function toggleDarkMode() {
+      const isDark = document.documentElement.classList.toggle('dark');
+      localStorage.setItem('darkMode', isDark);
+      document.cookie = `dark_mode=${isDark}; path=/; max-age=31536000`;
+    }
+  </script>
+</head>
+<body class="bg-gray-100 dark:bg-gray-900 text-gray-900 dark:text-gray-100 min-h-screen flex flex-col">
+
+  {% block content %}{% endblock %}
+
+  <script>
+    // Mettre à jour le tri
+    function updateSort() {
+      const sortSelect = document.getElementById('sort-select');
+      if (!sortSelect) return;
+
+      const sortValue = sortSelect.value;
+      const url = new URL(window.location.href);
+      url.searchParams.set('sort', sortValue);
+      window.location.href = url.toString();
+    }
+
+    // Charger les torrents populaires
+    async function loadFeaturedTorrents() {
+      const featuredSection = document.getElementById('featured-torrents');
+      if (!featuredSection) return;
+
+      try {
+        const response = await fetch('/search?sort=seeders');
+        if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+
+        const text = await response.text();
+        const tempDiv = document.createElement('div');
+        tempDiv.innerHTML = text;
+
+        const torrentCards = tempDiv.querySelectorAll('.torrent-card');
+        featuredSection.innerHTML = '';
+
+        for (let i = 0; i < Math.min(4, torrentCards.length); i++) {
+          featuredSection.appendChild(torrentCards[i].cloneNode(true));
+        }
+
+      } catch (error) {
+        console.error('Erreur lors du chargement des torrents populaires:', error);
+        featuredSection.innerHTML = `
+          <div class="text-center py-8 text-red-400">
+            <i class="fas fa-exclamation-triangle text-3xl mb-3"></i>
+            <p>Impossible de charger les torrents populaires</p>
+          </div>
+        `;
+      }
+    }
+
+    document.addEventListener('DOMContentLoaded', loadFeaturedTorrents);
+
+    // Gestion des sous-catégories (si présent)
+    document.addEventListener('DOMContentLoaded', () => {
+      const categorySelect = document.getElementById('category-select');
+      const subcategoryGroup = document.getElementById('subcategory-group');
+
+      if (!categorySelect || !subcategoryGroup) return;
+
+      categorySelect.addEventListener('change', updateSubcategories);
+
+      function updateSubcategories() {
+        const category = categorySelect.value;
+        const subSelect = document.getElementById('subcategory-select');
+
+        if (!window.categories || !window.categories[category] || !window.categories[category].subcategories) {
+          subcategoryGroup.classList.add('hidden');
+          return;
+        }
+
+        subSelect.innerHTML = '';
+
+        for (const [key, value] of Object.entries(window.categories[category].subcategories)) {
+          const option = document.createElement('option');
+          option.value = key;
+          option.textContent = value;
+          subSelect.appendChild(option);
+        }
+
+        subcategoryGroup.classList.remove('hidden');
+      }
+
+      updateSubcategories();
+    });
+  </script>
+</body>
+</html>

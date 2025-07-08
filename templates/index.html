@@ -1,0 +1,172 @@
+<!-- templates/index.html -->
+{% extends "base.html" %}
+
+{% block title %}TorrentFlow - Accueil{% endblock %}
+
+{% block content %}
+<header class="bg-gradient-to-r from-indigo-600 to-purple-600 py-5 shadow-xl sticky top-0 z-50">
+    <div class="container mx-auto px-4">
+        <div class="flex flex-col md:flex-row justify-between items-center gap-4">
+            <div class="flex items-center">
+                <i class="fas fa-bolt text-3xl text-white mr-3"></i>
+                <h1 class="text-3xl font-bold text-white">TorrentFlow</h1>
+            </div>
+            
+            <form class="w-full md:w-1/2" action="/search" method="get">
+                <div class="flex">
+                    <input 
+                        type="text" 
+                        name="query"
+                        placeholder="Rechercher des torrents..." 
+                        class="search-input w-full py-3 px-5 rounded-l-xl text-gray-900 dark:text-white focus:outline-none dark:bg-gray-800"
+                        autocomplete="off"
+                        value="{{ query }}"
+                    >
+                    <button type="submit" class="search-btn bg-indigo-700 hover:bg-indigo-800 text-white py-3 px-6 rounded-r-xl font-semibold">
+                        <i class="fas fa-search mr-2"></i> Rechercher
+                    </button>
+                </div>
+            </form>
+            
+            <div class="flex items-center space-x-4">
+                <label class="relative inline-flex items-center cursor-pointer">
+                    <input type="checkbox" id="darkModeToggle" class="sr-only peer" onclick="toggleDarkMode()">
+                    <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 dark:peer-focus:ring-blue-800 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-blue-600"></div>
+                    <span class="ml-3 text-sm font-medium text-white">
+                        <i class="fas {% if dark_mode %}fa-sun{% else %}fa-moon{% endif %}"></i>
+                    </span>
+                </label>
+                
+                <button class="bg-indigo-700 hover:bg-indigo-800 text-white p-3 rounded-full shadow-lg">
+                    <i class="fas fa-user"></i>
+                </button>
+            </div>
+        </div>
+    </div>
+</header>
+
+<main class="flex-grow py-8">
+    <div class="container mx-auto px-4">
+        <div class="bg-white dark:bg-gray-800 rounded-2xl shadow-xl p-6 mb-8">
+            <h2 class="text-2xl font-bold text-gray-900 dark:text-white mb-6 flex items-center">
+                <i class="fas fa-fire mr-3 text-indigo-500"></i> Derniers torrents populaires
+            </h2>
+            
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6" id="featured-torrents">
+                <div class="skeleton-loader torrent-card rounded-xl overflow-hidden h-48"></div>
+                <div class="skeleton-loader torrent-card rounded-xl overflow-hidden h-48"></div>
+                <div class="skeleton-loader torrent-card rounded-xl overflow-hidden h-48"></div>
+                <div class="skeleton-loader torrent-card rounded-xl overflow-hidden h-48"></div>
+            </div>
+        </div>
+        
+        <div class="bg-white dark:bg-gray-800 rounded-2xl shadow-xl p-6">
+            <h2 class="text-2xl font-bold text-gray-900 dark:text-white mb-6">Recherche avancée</h2>
+            
+            <form action="/search" method="get">
+                <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+                    <div>
+                        <label class="block text-gray-700 dark:text-gray-300 mb-2">Catégorie</label>
+                        <select id="category-select" name="category" class="w-full p-3 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white">
+                            <option value="all">Toutes catégories</option>
+                            {% for key, value in categories.items() %}
+                            <option value="{{ key }}">{{ value.name }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    
+                    <div id="subcategory-group" class="hidden">
+                        <label class="block text-gray-700 dark:text-gray-300 mb-2">Sous-catégorie</label>
+                        <select id="subcategory-select" name="subcategory" class="w-full p-3 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white">
+                            <option value="all">Tous</option>
+                        </select>
+                    </div>
+                    
+                    <div>
+                        <label class="block text-gray-700 dark:text-gray-300 mb-2">Trier par</label>
+                        <select name="sort" class="w-full p-3 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white">
+                            {% for key, value in sort_options.items() %}
+                            <option value="{{ key }}">{{ value }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    
+                    <div>
+                        <label class="block text-gray-700 dark:text-gray-300 mb-2">Filtre</label>
+                        <select name="filter" class="w-full p-3 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white">
+                            {% for key, value in filter_options.items() %}
+                            <option value="{{ key }}">{{ value }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                </div>
+                
+                <div class="mt-6">
+                    <button type="submit" class="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 px-6 rounded-lg">
+                        <i class="fas fa-search mr-2"></i> Rechercher
+                    </button>
+                </div>
+            </form>
+        </div>
+        
+        <div class="bg-white dark:bg-gray-800 rounded-2xl shadow-xl p-6 mt-8">
+            <h3 class="text-xl font-bold text-gray-900 dark:text-white mb-4">Comment utiliser TorrentFlow</h3>
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                <div class="bg-gray-100 dark:bg-gray-700 p-5 rounded-xl">
+                    <div class="w-12 h-12 bg-indigo-600 rounded-full flex items-center justify-center mb-4">
+                        <i class="fas fa-search text-xl text-white"></i>
+                    </div>
+                    <h4 class="font-bold text-lg mb-2 dark:text-white">Recherche intuitive</h4>
+                    <p class="text-gray-600 dark:text-gray-300">Trouvez les torrents que vous cherchez avec notre moteur de recherche puissant et précis.</p>
+                </div>
+                
+                <div class="bg-gray-100 dark:bg-gray-700 p-5 rounded-xl">
+                    <div class="w-12 h-12 bg-indigo-600 rounded-full flex items-center justify-center mb-4">
+                        <i class="fas fa-bolt text-xl text-white"></i>
+                    </div>
+                    <h4 class="font-bold text-lg mb-2 dark:text-white">Résultats en temps réel</h4>
+                    <p class="text-gray-600 dark:text-gray-300">Accédez aux derniers torrents directement depuis les sources les plus récentes.</p>
+                </div>
+                
+                <div class="bg-gray-100 dark:bg-gray-700 p-5 rounded-xl">
+                    <div class="w-12 h-12 bg-indigo-600 rounded-full flex items-center justify-center mb-4">
+                        <i class="fas fa-shield-alt text-xl text-white"></i>
+                    </div>
+                    <h4 class="font-bold text-lg mb-2 dark:text-white">Navigation sécurisée</h4>
+                    <p class="text-gray-600 dark:text-gray-300">Tous les liens sont vérifiés pour garantir votre sécurité pendant le téléchargement.</p>
+                </div>
+            </div>
+        </div>
+    </div>
+</main>
+
+<footer class="bg-gray-800 border-t border-gray-700 py-8 mt-auto">
+    <div class="container mx-auto px-4">
+        <div class="flex flex-col md:flex-row justify-between items-center">
+            <div class="mb-6 md:mb-0">
+                <div class="flex items-center">
+                    <i class="fas fa-bolt text-2xl text-indigo-500 mr-2"></i>
+                    <span class="text-xl font-bold text-white">TorrentFlow</span>
+                </div>
+                <p class="text-gray-500 mt-2">La manière moderne de trouver des torrents</p>
+            </div>
+            
+            <div class="flex space-x-6">
+                <a href="#" class="text-gray-400 hover:text-white">
+                    <i class="fab fa-github text-xl"></i>
+                </a>
+                <a href="#" class="text-gray-400 hover:text-white">
+                    <i class="fab fa-twitter text-xl"></i>
+                </a>
+                <a href="#" class="text-gray-400 hover:text-white">
+                    <i class="fab fa-discord text-xl"></i>
+                </a>
+            </div>
+        </div>
+        
+        <div class="border-t border-gray-700 mt-8 pt-8 text-center text-gray-500">
+            <p>© 2023 TorrentFlow. Tous droits réservés. Ce site indexe des liens torrents mais ne les héberge pas.</p>
+        </div>
+    </div>
+</footer>
+{% endblock %}
