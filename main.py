@@ -4,8 +4,8 @@ from urllib.parse import quote_plus
 from fastapi import FastAPI, Request, Query, HTTPException
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from fastapi.responses import HTMLResponse, RedirectResponse
-from typing import Optional
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
+from typing import Optional, Dict, List
 import math
 from datetime import datetime
 from urllib.parse import urlencode
@@ -13,7 +13,14 @@ import logging
 import html
 import os
 import re
-from config import cf
+import redis
+import json
+import hashlib
+import libtorrent as lt
+import tempfile
+import time
+import concurrent.futures
+from config import cf, logger
 
 app = FastAPI()
 
@@ -24,13 +31,71 @@ if BASE_URI.endswith('/'):
     BASE_URI = BASE_URI[:-1]
 RESULTS_PER_PAGE = cf.RESULTS_PER_PAGE
 FEATURED_COUNT = cf.FEATURED_COUNT
+REDIS_HOST = cf.REDIS_HOST
+REDIS_PORT = cf.REDIS_PORT
+REDIS_DB = cf.REDIS_DB
+REDIS_PASSWORD = cf.REDIS_PASSWORD
+CACHE_TIMEOUT = cf.CACHE_TIMEOUT
+ANALYZE_TIMEOUT = cf.ANALYZE_TIMEOUT
+MAX_ANALYZE_WORKERS = cf.MAX_ANALYZE_WORKERS
 
-# Configuration du logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("torrentflow")
+# Initialisation Redis
+try:
+    r = redis.Redis(
+        host=REDIS_HOST,
+        port=REDIS_PORT,
+        db=REDIS_DB,
+        password=REDIS_PASSWORD,
+        decode_responses=True,
+        socket_timeout=5,
+        socket_connect_timeout=5
+    )
+    r.ping()
+    logger.info("Connecté à Redis avec succès")
+except redis.RedisError as e:
+    logger.error(f"Erreur de connexion à Redis: {str(e)}")
+    r = None
+
+# Headers pour contourner les blocages
+HEADERS = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+    'Accept': 'application/rss+xml, application/atom+xml, application/xml;q=0.9, */*;q=0.8',
+    'Accept-Language': 'en-US,en;q=0.5',
+    'Connection': 'keep-alive',
+    'DNT': '1'
+}
 
 app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
+
+@app.get("/favicon.ico", include_in_schema=False)
+async def favicon():
+    return FileResponse("static/favicon.ico")
+
+# Configuration des sites
+SITES = {
+    "nyaa": {
+        "name": "Nyaa",
+        "base_url": "https://nyaa.si",
+        "rss_url": "https://nyaa.si/?page=rss",
+        "type": "nyaa",
+        "analyze": False
+    },
+    "subsplease": {
+        "name": "SubsPlease",
+        "base_url": "https://subsplease.org",
+        "rss_url": "https://subsplease.org/rss/",
+        "type": "generic",
+        "analyze": True
+    },
+    "animetosho": {
+        "name": "AnimeTosho",
+        "base_url": "https://animetosho.org",
+        "rss_url": "https://feed.animetosho.org/rss2?only_tor=1",
+        "type": "animetosho",
+        "analyze": True
+    }
+}
 
 # Configuration des catégories
 CATEGORIES = {
@@ -40,7 +105,6 @@ CATEGORIES = {
             "all": "Tous"
         }
     },
-
     "anime": {
         "name": "Anime",
         "subcategories": {
@@ -50,7 +114,6 @@ CATEGORIES = {
             "raw": "Raw"
         }
     },
-
     "audio": {
         "name": "Audio",
         "subcategories": {
@@ -59,7 +122,6 @@ CATEGORIES = {
             "lossy": "Lossy"
         }
     },
-
     "literature": {
         "name": "Littérature",
         "subcategories": {
@@ -69,7 +131,6 @@ CATEGORIES = {
             "raw": "Raw"
         }
     },
-
     "live_action": {
         "name": "Live Action",
         "subcategories": {
@@ -79,7 +140,6 @@ CATEGORIES = {
             "raw": "Raw"
         }
     },
-
     "pictures": {
         "name": "Images",
         "subcategories": {
@@ -88,7 +148,6 @@ CATEGORIES = {
             "photos": "Photos"
         }
     },
-
     "software": {
         "name": "Logiciels",
         "subcategories": {
@@ -98,7 +157,6 @@ CATEGORIES = {
         }
     }
 }
-
 
 SORT_OPTIONS = {
     "id": "Date",
@@ -151,7 +209,116 @@ def detect_language(title: str) -> str:
         return "korean"
     return "unknown"
 
+def parse_size(size_str):
+    """Convertit une chaîne de taille en valeur numérique en GB"""
+    try:
+        size_str = size_str.lower()
+        if 'gib' in size_str or 'gb' in size_str:
+            return float(size_str.replace('gib', '').replace('gb', '').strip())
+        elif 'mib' in size_str or 'mb' in size_str:
+            return float(size_str.replace('mib', '').replace('mb', '').strip()) / 1024
+        elif 'kib' in size_str or 'kb' in size_str:
+            return float(size_str.replace('kib', '').replace('kb', '').strip()) / (1024 * 1024)
+        elif 'b' in size_str:
+            return float(size_str.replace('b', '').strip()) / (1024 * 1024 * 1024)
+        return 0
+    except (ValueError, TypeError):
+        return 0
+
+def format_size(size_bytes):
+    """Formatte la taille en octets en chaîne lisible"""
+    if size_bytes == 0:
+        return "0B"
+
+    units = ['B', 'KB', 'MB', 'GB', 'TB']
+    unit_index = 0
+
+    while size_bytes >= 1024 and unit_index < len(units)-1:
+        size_bytes /= 1024.0
+        unit_index += 1
+
+    return f"{size_bytes:.2f} {units[unit_index]}"
+
+def analyze_torrent(torrent_url: str, is_magnet: bool = False, timeout=10):
+    """Analyse un torrent ou magnet pour extraire les métadonnées"""
+    cache_key = f"torrent_analysis:{hashlib.md5(torrent_url.encode()).hexdigest()}"
+
+    # Vérifier le cache Redis
+    if r:
+        cached = r.get(cache_key)
+        if cached:
+            try:
+                return json.loads(cached)
+            except json.JSONDecodeError:
+                pass
+
+    try:
+        ses = lt.session()
+        params = {
+            'save_path': tempfile.gettempdir(),
+            'storage_mode': lt.storage_mode_t(2),
+        }
+
+        start_time = time.time()
+
+        if is_magnet:
+            handle = lt.add_magnet_uri(ses, torrent_url, params)
+            status = handle.status()
+
+            # Attendre les métadonnées
+            while not handle.has_metadata():
+                if time.time() - start_time > timeout:
+                    raise TimeoutError("Timeout waiting for metadata")
+                time.sleep(0.1)
+                status = handle.status()
+        else:
+            # Télécharger le fichier torrent
+            response = requests.get(torrent_url, headers=HEADERS, timeout=timeout)
+            response.raise_for_status()
+            torrent_data = lt.bdecode(response.content)
+            info = lt.torrent_info(torrent_data)
+            params['ti'] = info
+            handle = ses.add_torrent(params)
+            status = handle.status()
+
+        # Attendre les stats des trackers
+        while status.num_seeds == -1 and time.time() - start_time < timeout:
+            time.sleep(0.5)
+            status = handle.status()
+
+        # Préparer le résultat
+        analysis = {
+            "seeders": max(status.num_seeds, 0),
+            "leechers": max(status.num_peers - status.num_seeds, 0),
+            "size_bytes": status.total_wanted,
+            "size_human": format_size(status.total_wanted),
+            "infohash": str(status.info_hash) if status.info_hash else "",
+            "success": status.num_seeds >= 0
+        }
+
+        # Mettre en cache
+        if r and analysis["success"]:
+            r.setex(cache_key, 300, json.dumps(analysis))  # Cache 5 minutes
+
+        return analysis
+    except Exception as e:
+        logger.error(f"Erreur d'analyse torrent: {str(e)}")
+        return {
+            "seeders": 0,
+            "leechers": 0,
+            "size_bytes": 0,
+            "size_human": "0 GB",
+            "infohash": "",
+            "success": False
+        }
+    finally:
+        try:
+            ses.remove_torrent(handle)
+        except:
+            pass
+
 def build_rss_url(
+    site: Dict,
     query: Optional[str] = None,
     category: str = "all",
     subcategory: str = "all",
@@ -159,7 +326,22 @@ def build_rss_url(
     order: str = "desc",
     filter: str = "all"
 ):
-    """Construit l'URL du flux RSS avec toutes les catégories Nyaa."""
+    """Construit l'URL du flux RSS pour un site spécifique"""
+    if site['type'] == 'nyaa':
+        return build_nyaa_rss_url(site, query, category, subcategory, sort, order, filter)
+    else:
+        return build_generic_rss_url(site, query)
+
+def build_nyaa_rss_url(
+    site: Dict,
+    query: Optional[str] = None,
+    category: str = "all",
+    subcategory: str = "all",
+    sort: str = "id",
+    order: str = "desc",
+    filter: str = "all"
+):
+    """Construit l'URL du flux RSS Nyaa"""
     params = {
         "page": "rss",
     }
@@ -241,18 +423,30 @@ def build_rss_url(
     if filter in FILTER_OPTIONS and filter != "all":
         params["f"] = filter
 
-    return f"{RSS_BASE_URL}?{urlencode(params)}"
+    return f"{site['base_url']}?{urlencode(params)}"
 
-def parse_torrent_entry(entry):
-    """Parse une entrée RSS en objet torrent avec magnet complet"""
+def build_generic_rss_url(site: Dict, query: Optional[str] = None):
+    """Construit l'URL du flux RSS pour les sites génériques"""
+    rss_url = site['rss_url']
+    if query:
+        if '?' in rss_url:
+            rss_url += f"&q={quote_plus(query)}"
+        else:
+            rss_url += f"?q={quote_plus(query)}"
+    return rss_url
+
+def parse_nyaa_entry(entry):
+    """Parse une entrée RSS Nyaa"""
     def get_nyaa_value(tag, default=""):
         full_tag = f"nyaa_{tag.lower()}"
         return entry.get(full_tag, default)
 
     pub_date = datetime.now().strftime("%d/%m/%Y %H:%M")
+    pub_timestamp = datetime.now().timestamp()
     if hasattr(entry, 'published_parsed'):
         try:
             pub_date = datetime(*entry.published_parsed[:6]).strftime("%d/%m/%Y %H:%M")
+            pub_timestamp = datetime(*entry.published_parsed[:6]).timestamp()
         except Exception:
             pass
 
@@ -277,7 +471,7 @@ def parse_torrent_entry(entry):
     lang_key = detect_language(title)
     language = LANGUAGES.get(lang_key, LANGUAGES["unknown"])
 
-    # 🔥 Trackers principaux Nyaa
+    # Trackers principaux
     trackers = [
         "http://nyaa.tracker.wf:7777/announce",
         "udp://open.stealth.si:80/announce",
@@ -295,6 +489,7 @@ def parse_torrent_entry(entry):
         "title": title,
         "link": entry.get("link", ""),
         "pub_date": pub_date,
+        "pub_timestamp": pub_timestamp,
         "size": size,
         "seeders": seeders,
         "leechers": leechers,
@@ -307,31 +502,313 @@ def parse_torrent_entry(entry):
     }
 
     # Calcul size_value
-    torrent["size_value"] = 0
-    size_str = torrent["size"]
-    try:
-        if "GiB" in size_str or "GB" in size_str:
-            torrent["size_value"] = float(size_str.split()[0])
-        elif "MiB" in size_str or "MB" in size_str:
-            torrent["size_value"] = float(size_str.split()[0]) / 1024
-        elif "KiB" in size_str or "KB" in size_str:
-            torrent["size_value"] = float(size_str.split()[0]) / (1024 * 1024)
-    except (ValueError, IndexError):
-        pass
-
+    torrent["size_value"] = parse_size(size)
     return torrent
+
+def parse_generic_entry(entry):
+    """Parse une entrée RSS générique"""
+    pub_date = datetime.now().strftime("%d/%m/%Y %H:%M")
+    pub_timestamp = datetime.now().timestamp()
+    if hasattr(entry, 'published_parsed'):
+        try:
+            pub_date = datetime(*entry.published_parsed[:6]).strftime("%d/%m/%Y %H:%M")
+            pub_timestamp = datetime(*entry.published_parsed[:6]).timestamp()
+        except Exception:
+            pass
+
+    title = html.unescape(entry.get("title", "Sans titre"))
+
+    # Détection de la langue
+    lang_key = detect_language(title)
+    language = LANGUAGES.get(lang_key, LANGUAGES["unknown"])
+
+    # Extraction du lien magnet
+    magnet = ""
+    if 'magneturi' in entry:
+        magnet = entry['magneturi']
+    else:
+        for link in entry.get('links', []):
+            if link.get('type') == 'application/x-bittorrent' or 'magnet:' in link.get('href', ''):
+                magnet = link['href']
+                break
+        if not magnet:
+            magnet = entry.get('link', '')
+
+    # Extraction de l'infohash
+    infohash = ""
+    if magnet.startswith("magnet:"):
+        match = re.search(r'xt=urn:btih:([0-9a-fA-F]{40})', magnet)
+        if match:
+            infohash = match.group(1).lower()
+
+    # Extraction de la taille depuis la description
+    size = "0 GB"
+    if 'description' in entry:
+        size_match = re.search(r'<strong>Size</strong>: ([\d.]+ (?:GB|MB|KB))', entry.description, re.IGNORECASE)
+        if not size_match:
+            size_match = re.search(r'Total Size: ([\d.]+ (?:GB|MB|KB))', entry.description, re.IGNORECASE)
+        if size_match:
+            size = size_match.group(1)
+
+    # Extraction du lien torrent
+    torrent_url = ""
+    if 'links' in entry:
+        for link in entry.get('links', []):
+            if link.get('type') == 'application/x-bittorrent':
+                torrent_url = link.href
+                break
+
+    return {
+        "title": title,
+        "link": entry.get("link", ""),
+        "pub_date": pub_date,
+        "pub_timestamp": pub_timestamp,
+        "size": size,
+        "size_value": parse_size(size),
+        "seeders": 0,
+        "leechers": 0,
+        "category": "Generic",
+        "infohash": infohash,
+        "completed": 0,
+        "language": language,
+        "language_flag": language["flag"],
+        "magnet": magnet,
+        "torrent_url": torrent_url
+    }
+
+def parse_animetosho_entry(entry):
+    """Parser spécifique pour AnimeTosho"""
+    pub_date = datetime.now().strftime("%d/%m/%Y %H:%M")
+    pub_timestamp = datetime.now().timestamp()
+    if hasattr(entry, 'published_parsed'):
+        try:
+            pub_date = datetime(*entry.published_parsed[:6]).strftime("%d/%m/%Y %H:%M")
+            pub_timestamp = datetime(*entry.published_parsed[:6]).timestamp()
+        except Exception:
+            pass
+
+    title = html.unescape(entry.get("title", "Sans titre"))
+
+    # Extraction de la taille depuis la description
+    size = "0 GB"
+    if 'description' in entry:
+        size_match = re.search(r'<strong>Total Size</strong>: ([\d.]+ (?:GB|MB|KB))', entry.description, re.IGNORECASE)
+        if size_match:
+            size = size_match.group(1)
+
+    # Extraction du lien magnet
+    magnet = ""
+    if 'description' in entry:
+        magnet_match = re.search(r'href="(magnet:\?[^"]+)"', entry.description)
+        if magnet_match:
+            magnet = magnet_match.group(1)
+
+    # Extraction de l'infohash
+    infohash = ""
+    if magnet:
+        match = re.search(r'xt=urn:btih:([0-9a-fA-F]{40})', magnet)
+        if match:
+            infohash = match.group(1).lower()
+
+    # Extraction du lien torrent
+    torrent_url = ""
+    if 'links' in entry:
+        for link in entry.links:
+            if link.get('type') == 'application/x-bittorrent':
+                torrent_url = link.href
+                break
+
+    # Détection de la langue
+    lang_key = detect_language(title)
+    language = LANGUAGES.get(lang_key, LANGUAGES["unknown"])
+
+    return {
+        "title": title,
+        "link": entry.get("link", ""),
+        "pub_date": pub_date,
+        "pub_timestamp": pub_timestamp,
+        "size": size,
+        "size_value": parse_size(size),
+        "seeders": 0,
+        "leechers": 0,
+        "category": "Anime",
+        "infohash": infohash,
+        "completed": 0,
+        "language": language,
+        "language_flag": language["flag"],
+        "magnet": magnet,
+        "torrent_url": torrent_url
+    }
+
+def parse_entry(entry, site_type: str, site_config: Dict):
+    """Dispatch vers le parser approprié"""
+    if site_type == "nyaa":
+        return parse_nyaa_entry(entry)
+    elif site_type == "animetosho":
+        return parse_animetosho_entry(entry)
+    else:
+        return parse_generic_entry(entry)
+
+def get_cache_key(site: Dict, params: Dict) -> str:
+    """Génère une clé de cache unique pour la requête"""
+    key_data = {
+        "site": site['name'],
+        "query": params.get("query", ""),
+        "category": params.get("category", ""),
+        "subcategory": params.get("subcategory", ""),
+        "sort": params.get("sort", ""),
+        "order": params.get("order", ""),
+        "filter": params.get("filter", "")
+    }
+    key_str = json.dumps(key_data, sort_keys=True)
+    return f"torrents:{hashlib.md5(key_str.encode()).hexdigest()}"
+
+def is_site_available(url):
+    """Vérifie si un site est accessible"""
+    try:
+        response = requests.head(url, headers=HEADERS, timeout=5)
+        return response.status_code < 400
+    except requests.exceptions.RequestException:
+        return False
+
+def analyze_torrents(torrents: List[Dict], site_config: Dict):
+    """Analyse les torrents en parallèle pour extraire les stats"""
+    if not site_config.get("analyze", False):
+        return torrents
+
+    logger.info(f"Début de l'analyse pour {len(torrents)} torrents...")
+
+    # Préparer les tâches d'analyse avec validation
+    analyze_tasks = []
+    for torrent in torrents:
+        torrent_url = torrent.get("torrent_url") or torrent.get("magnet")
+
+        # Filtrer les URLs vides ou invalides
+        if not torrent_url or not torrent_url.strip():
+            logger.warning(f"URL manquante pour le torrent: {torrent.get('title')}")
+            continue
+
+        # Vérifier le schéma de l'URL
+        if torrent_url.startswith("magnet:") or torrent_url.startswith("http"):
+            analyze_tasks.append(torrent)
+        else:
+            logger.warning(f"URL invalide: {torrent_url}")
+
+    # Fonction pour analyser un seul torrent
+    def analyze_single(torrent):
+        try:
+            torrent_url = torrent.get("torrent_url") or torrent.get("magnet")
+
+            # Vérifier à nouveau l'URL
+            if not torrent_url or not torrent_url.strip():
+                return torrent
+
+            is_magnet = torrent_url.startswith("magnet:")
+            analysis = analyze_torrent(torrent_url, is_magnet, ANALYZE_TIMEOUT)
+
+            if analysis and analysis["success"]:
+                torrent["seeders"] = analysis["seeders"]
+                torrent["leechers"] = analysis["leechers"]
+
+                if analysis["size_bytes"] > 0 and torrent.get("size_value", 0) == 0:
+                    torrent["size"] = analysis["size_human"]
+                    torrent["size_value"] = analysis["size_bytes"] / (1024 ** 3)
+
+                if analysis["infohash"] and not torrent.get("infohash"):
+                    torrent["infohash"] = analysis["infohash"]
+        except Exception as e:
+            logger.error(f"Erreur d'analyse pour {torrent.get('title')}: {str(e)}")
+        return torrent
+
+    # Exécuter en parallèle
+    with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_ANALYZE_WORKERS) as executor:
+        futures = {executor.submit(analyze_single, torrent): torrent for torrent in analyze_tasks}
+
+        for future in concurrent.futures.as_completed(futures):
+            try:
+                future.result()
+            except Exception as e:
+                logger.error(f"Erreur dans le thread d'analyse: {str(e)}")
+
+    logger.info("Analyse des torrents terminée")
+    return torrents
+
+def fetch_torrents(site: Dict, params: Dict) -> List[Dict]:
+    """Récupère les torrents d'un site avec cache Redis"""
+    cache_key = get_cache_key(site, params)
+
+    # Tentative de récupération depuis le cache
+    if r:
+        cached = r.get(cache_key)
+        if cached:
+            try:
+                return json.loads(cached)
+            except json.JSONDecodeError:
+                pass
+
+    # Vérifier si le site est accessible
+    if not is_site_available(site['base_url']):
+        logger.warning(f"Site {site['name']} inaccessible, utilisation du cache")
+        return []
+
+    # Construction de l'URL
+    rss_url = build_rss_url(
+        site,
+        query=params.get("query"),
+        category=params.get("category", "all"),
+        subcategory=params.get("subcategory", "all"),
+        sort=params.get("sort", "id"),
+        order=params.get("order", "desc"),
+        filter=params.get("filter", "all")
+    )
+
+    try:
+        logger.info(f"Fetching RSS feed: {rss_url}")
+        response = requests.get(rss_url, headers=HEADERS, timeout=15)
+        response.raise_for_status()
+        feed = feedparser.parse(response.content)
+
+        torrents = [parse_entry(entry, site['type'], site) for entry in feed.entries]
+
+        # Analyse supplémentaire si activée pour ce site
+        torrents = analyze_torrents(torrents, site)
+
+        # Mise en cache
+        if r and torrents:
+            r.setex(cache_key, CACHE_TIMEOUT, json.dumps(torrents))
+
+        return torrents
+    except requests.exceptions.RequestException as e:
+        logger.warning(f"Erreur réseau pour {site['name']}: {str(e)}")
+        return []
+    except Exception as e:
+        logger.error(f"Erreur inattendue pour {site['name']}: {str(e)}")
+        return []
 
 def find_torrent_by_infohash(entries, infohash):
     """Recherche un torrent par infohash dans la liste des entrées"""
+    infohash = infohash.lower()
     for entry in entries:
         # Vérifier l'infohash dans les champs possibles
-        entry_infohash = entry.get('nyaa_infohash', '').lower()
-        if entry_infohash == infohash.lower():
+        if 'nyaa_infohash' in entry and entry.nyaa_infohash.lower() == infohash:
             return entry
 
         # Vérifier dans le lien
         link = entry.get('link', '')
-        if infohash.lower() in link.lower():
+        if infohash in link.lower():
+            return entry
+
+        # Vérifier dans le magnet
+        magnet = ""
+        if 'magneturi' in entry:
+            magnet = entry.magneturi
+        else:
+            for link in entry.get('links', []):
+                if link.get('type') == 'application/x-bittorrent' or 'magnet:' in link.get('href', ''):
+                    magnet = link.href
+                    break
+
+        if infohash in magnet.lower():
             return entry
 
     return None
@@ -343,6 +820,7 @@ async def home(request: Request):
         "categories": CATEGORIES,
         "sort_options": SORT_OPTIONS,
         "filter_options": FILTER_OPTIONS,
+        "sites": SITES,
         "total_pages": 1,
         "page": 1,
         "query": "",
@@ -351,6 +829,7 @@ async def home(request: Request):
         "sort": "id",
         "order": "desc",
         "filter": "all",
+        "site": "all",
         "torrents": [],
         "dark_mode": request.cookies.get("dark_mode", "true") == "true",
         "base_uri": BASE_URI
@@ -365,19 +844,38 @@ async def search_torrents(
     sort: str = "id",
     order: str = "desc",
     filter: str = "all",
+    site: str = "all",
     page: int = 1
 ):
     try:
-        rss_url = build_rss_url(query, category, subcategory, sort, order, filter)
-        logger.info(f"Fetching RSS feed: {rss_url}")
+        # Déterminer les sites à interroger
+        if site == "all":
+            sites_to_search = list(SITES.values())
+        elif site in SITES:
+            sites_to_search = [SITES[site]]
+        else:
+            sites_to_search = [SITES["nyaa"]]
 
-        response = requests.get(rss_url, timeout=10)
-        # response.raise_for_status()
+        # Paramètres de recherche
+        search_params = {
+            "query": query,
+            "category": category,
+            "subcategory": subcategory,
+            "sort": sort,
+            "order": order,
+            "filter": filter
+        }
 
-        feed = feedparser.parse(response.content)
+        # Récupération des torrents de tous les sites sélectionnés
+        all_torrents = []
+        for site_data in sites_to_search:
+            site_torrents = fetch_torrents(site_data, search_params)
+            if site_torrents:
+                all_torrents.extend(site_torrents)
 
-        if not feed.entries:
-            logger.warning("Le flux RSS est vide")
+        # Si aucun résultat n'est trouvé
+        if not all_torrents:
+            logger.info("Aucun torrent trouvé pour la recherche")
             return templates.TemplateResponse("results.html", {
                 "request": request,
                 "torrents": [],
@@ -387,6 +885,7 @@ async def search_torrents(
                 "sort": sort,
                 "order": order,
                 "filter": filter,
+                "site": site,
                 "page": page,
                 "total_results": 0,
                 "total_pages": 1,
@@ -394,19 +893,27 @@ async def search_torrents(
                 "categories": CATEGORIES,
                 "sort_options": SORT_OPTIONS,
                 "filter_options": FILTER_OPTIONS,
+                "sites": SITES,
                 "dark_mode": request.cookies.get("dark_mode", "true") == "true",
                 "base_uri": BASE_URI
             })
 
-        torrents = [parse_torrent_entry(entry) for entry in feed.entries]
+        # Tri des résultats
+        reverse_order = (order == "desc")
+        if sort == "seeders":
+            all_torrents.sort(key=lambda x: x.get("seeders", 0), reverse=reverse_order)
+        elif sort == "size":
+            all_torrents.sort(key=lambda x: x.get("size_value", 0), reverse=reverse_order)
+        else:  # Par défaut: date
+            all_torrents.sort(key=lambda x: x.get("pub_timestamp", 0), reverse=reverse_order)
 
-        total_results = len(torrents)
+        # Pagination
+        total_results = len(all_torrents)
         total_pages = max(1, math.ceil(total_results / RESULTS_PER_PAGE))
-
         page = max(1, min(page, total_pages))
         start_index = (page - 1) * RESULTS_PER_PAGE
         end_index = start_index + RESULTS_PER_PAGE
-        paginated_torrents = torrents[start_index:end_index]
+        paginated_torrents = all_torrents[start_index:end_index]
 
         page_range = range(max(1, page-2), min(total_pages+1, page+3))
 
@@ -421,6 +928,7 @@ async def search_torrents(
                 "sort": sort,
                 "order": order,
                 "filter": filter,
+                "site": site,
                 "page": page,
                 "total_results": total_results,
                 "total_pages": total_pages,
@@ -428,13 +936,14 @@ async def search_torrents(
                 "categories": CATEGORIES,
                 "sort_options": SORT_OPTIONS,
                 "filter_options": FILTER_OPTIONS,
+                "sites": SITES,
                 "dark_mode": request.cookies.get("dark_mode", "true") == "true",
                 "base_uri": BASE_URI
             }
         )
 
     except Exception as e:
-        logger.error(f"Erreur lors de la récupération du flux RSS: {str(e)}")
+        logger.error(f"Erreur lors de la recherche: {str(e)}")
         return templates.TemplateResponse("error.html", {
             "request": request,
             "error_message": "Impossible de charger les résultats. Veuillez réessayer plus tard.",
@@ -445,32 +954,53 @@ async def search_torrents(
 @app.get("/details/{infohash}", response_class=HTMLResponse)
 async def torrent_details(request: Request, infohash: str):
     try:
-        # Construire une requête pour récupérer le torrent par son infohash
-        rss_url = build_rss_url(query=infohash, sort="id", order="desc")
-        logger.info(f"Fetching details for infohash: {infohash}, RSS URL: {rss_url}")
+        # Recherche du torrent sur tous les sites
+        torrent = None
+        for site_id, site_data in SITES.items():
+            try:
+                # Recherche par infohash
+                rss_url = build_rss_url(site_data, query=infohash)
+                response = requests.get(rss_url, headers=HEADERS, timeout=15)
+                feed = feedparser.parse(response.content)
 
-        response = requests.get(rss_url, timeout=10)
-        response.raise_for_status()
+                if feed.entries:
+                    torrent_entry = find_torrent_by_infohash(feed.entries, infohash)
+                    if torrent_entry:
+                        torrent = parse_entry(torrent_entry, site_data['type'], site_data)
+                        torrent["site"] = site_id
+                        break
+            except Exception as e:
+                logger.warning(f"Erreur sur le site {site_id}: {str(e)}")
+                continue
 
-        feed = feedparser.parse(response.content)
-
-        if not feed.entries:
-            logger.warning(f"Aucune entrée trouvée pour l'infohash: {infohash}")
+        if not torrent:
             return RedirectResponse("/", status_code=303)
 
-        # Rechercher le torrent spécifique
-        torrent_entry = find_torrent_by_infohash(feed.entries, infohash)
+        # Analyse supplémentaire si nécessaire
+        if (torrent.get("seeders", 0) == 0 or torrent.get("size_value", 0) == 0) and \
+           (torrent.get("torrent_url") or torrent.get("magnet")):
+            try:
+                torrent_url = torrent.get("torrent_url", torrent.get("magnet"))
+                is_magnet = torrent_url.startswith("magnet:")
+                analysis = analyze_torrent(torrent_url, is_magnet, ANALYZE_TIMEOUT)
 
-        if not torrent_entry:
-            logger.warning(f"Torrent introuvable pour l'infohash: {infohash}")
-            return RedirectResponse("/", status_code=303)
+                if analysis and analysis["success"]:
+                    torrent["seeders"] = analysis.get("seeders", torrent.get("seeders", 0))
+                    torrent["leechers"] = analysis.get("leechers", torrent.get("leechers", 0))
 
-        torrent = parse_torrent_entry(torrent_entry)
-        logger.info(f"Torrent trouvé: {torrent['title']}")
+                    if analysis["size_bytes"] > 0:
+                        torrent["size"] = analysis.get("size_human", torrent.get("size", "0 GB"))
+                        torrent["size_value"] = analysis["size_bytes"] / (1024 ** 3)
+
+                    if analysis["infohash"] and not torrent.get("infohash"):
+                        torrent["infohash"] = analysis["infohash"]
+            except Exception as e:
+                logger.error(f"Erreur d'analyse pour les détails: {str(e)}")
 
         return templates.TemplateResponse("details.html", {
             "request": request,
             "torrent": torrent,
+            "categories": CATEGORIES,  # Ajouté
             "dark_mode": request.cookies.get("dark_mode", "true") == "true",
             "base_uri": BASE_URI
         })
@@ -483,6 +1013,99 @@ async def torrent_details(request: Request, infohash: str):
             "dark_mode": request.cookies.get("dark_mode", "true") == "true",
             "base_uri": BASE_URI
         })
+
+# Nouveaux endpoints pour les pages supplémentaires
+@app.get("/categories", response_class=HTMLResponse)
+async def categories_page(request: Request):
+    """Page de toutes les catégories"""
+    return templates.TemplateResponse("categories.html", {
+        "request": request,
+        "categories": CATEGORIES,
+        "dark_mode": request.cookies.get("dark_mode", "true") == "true",
+        "base_uri": BASE_URI
+    })
+
+@app.get("/top", response_class=HTMLResponse)
+async def top_torrents_page(request: Request):
+    """Page des torrents populaires"""
+    # Récupérer les torrents les plus populaires
+    top_torrents = []
+    for site_data in SITES.values():
+        site_torrents = fetch_torrents(site_data, {"sort": "seeders", "order": "desc"})
+        if site_torrents:
+            top_torrents.extend(site_torrents[:20])  # Prendre les 20 premiers par site
+
+    # Trier par seeders
+    top_torrents.sort(key=lambda x: x.get("seeders", 0), reverse=True)
+
+    return templates.TemplateResponse("top_torrents.html", {
+        "request": request,
+        "top_torrents": top_torrents[:50],  # Limiter à 50 résultats
+        "categories": CATEGORIES,  # Ajouté
+        "dark_mode": request.cookies.get("dark_mode", "true") == "true",
+        "base_uri": BASE_URI
+    })
+
+@app.get("/apps", response_class=HTMLResponse)
+async def applications_page(request: Request):
+    """Page des applications"""
+    return templates.TemplateResponse("applications.html", {
+        "request": request,
+        "categories": CATEGORIES,  # Ajouté
+        "dark_mode": request.cookies.get("dark_mode", "true") == "true",
+        "base_uri": BASE_URI
+    })
+
+# Pages légales
+@app.get("/legal/mentions", response_class=HTMLResponse)
+async def legal_mentions(request: Request):
+    """Page des mentions légales"""
+    return templates.TemplateResponse("mentions_legales.html", {
+        "request": request,
+        "categories": CATEGORIES,  # Ajouté
+        "dark_mode": request.cookies.get("dark_mode", "true") == "true",
+        "base_uri": BASE_URI
+    })
+
+@app.get("/legal/privacy", response_class=HTMLResponse)
+async def privacy_policy(request: Request):
+    """Page de politique de confidentialité"""
+    return templates.TemplateResponse("politique_confidentialite.html", {
+        "request": request,
+        "categories": CATEGORIES,  # Ajouté
+        "dark_mode": request.cookies.get("dark_mode", "true") == "true",
+        "base_uri": BASE_URI
+    })
+
+@app.get("/legal/cookies", response_class=HTMLResponse)
+async def cookies_policy(request: Request):
+    """Page de préférences cookies"""
+    return templates.TemplateResponse("cookies.html", {
+        "request": request,
+        "categories": CATEGORIES,  # Ajouté
+        "dark_mode": request.cookies.get("dark_mode", "true") == "true",
+        "base_uri": BASE_URI
+    })
+
+@app.get("/legal/dmca", response_class=HTMLResponse)
+async def dmca_policy(request: Request):
+    """Page DMCA"""
+    return templates.TemplateResponse("dmca.html", {
+        "request": request,
+        "categories": CATEGORIES,  # Ajouté
+        "dark_mode": request.cookies.get("dark_mode", "true") == "true",
+        "base_uri": BASE_URI
+    })
+
+@app.get("/legal/terms", response_class=HTMLResponse)
+async def terms_of_service(request: Request):
+    """Page des conditions d'utilisation"""
+    return templates.TemplateResponse("conditions_utilisation.html", {
+        "request": request,
+        "categories": CATEGORIES,  # Ajouté
+        "dark_mode": request.cookies.get("dark_mode", "true") == "true",
+        "base_uri": BASE_URI
+    })
 
 if __name__ == "__main__":
     import uvicorn

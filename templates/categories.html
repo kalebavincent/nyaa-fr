@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+
+{% block title %}Catégories - TorrentFlow{% endblock %}
+
+{% block content %}
+<header id="main-header" class="bg-gradient-to-r from-indigo-600 via-purple-600 to-indigo-600 py-5 shadow-xl sticky top-0 z-50 backdrop-blur-sm bg-opacity-90 transition-all duration-300">
+    <!-- Header identique à l'accueil -->
+</header>
+
+<main class="flex-grow py-8">
+    <div class="container mx-auto px-4">
+        <div class="bg-white dark:bg-gray-800 rounded-2xl shadow-xl p-6 mb-8">
+            <h1 class="text-2xl font-bold text-gray-900 dark:text-white mb-6 flex items-center">
+                <i class="fas fa-folder-open mr-3 text-indigo-500"></i> Toutes les catégories
+            </h1>
+
+            <div class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4">
+                {% for key, category in categories.items() %}
+                <a href="/search?category={{ key }}"
+                    class="category-card bg-gradient-to-br from-indigo-50 to-purple-50 dark:from-gray-700 dark:to-gray-800 p-5 rounded-xl border border-indigo-100 dark:border-gray-700 hover:shadow-lg transition-all duration-300 group">
+                    <div class="w-12 h-12 bg-indigo-100 dark:bg-indigo-900 rounded-full flex items-center justify-center mb-3 mx-auto">
+                        <i class="{{ category.icon }} text-xl text-indigo-600 dark:text-indigo-300"></i>
+                    </div>
+                    <h3 class="font-semibold text-center text-gray-900 dark:text-white group-hover:text-indigo-600 dark:group-hover:text-indigo-400 transition-colors">
+                        {{ category.name }}
+                    </h3>
+                    <p class="text-xs text-gray-500 dark:text-gray-400 text-center mt-1">
+                        {{ category.count }} torrents
+                    </p>
+                </a>
+                {% endfor %}
+            </div>
+        </div>
+
+        <div class="bg-white dark:bg-gray-800 rounded-2xl shadow-xl p-6">
+            <h2 class="text-xl font-bold text-gray-900 dark:text-white mb-4">
+                <i class="fas fa-star mr-2 text-yellow-500"></i> Catégories populaires
+            </h2>
+
+            <div class="space-y-4">
+                {% for key in popular_categories %}
+                {% set category = categories[key] %}
+                <div class="popular-category bg-gray-50 dark:bg-gray-700 p-4 rounded-lg flex items-center">
+                    <div class="w-10 h-10 bg-indigo-100 dark:bg-indigo-900 rounded-full flex items-center justify-center mr-4">
+                        <i class="{{ category.icon }} text-lg text-indigo-600 dark:text-indigo-300"></i>
+                    </div>
+                    <div class="flex-1">
+                        <h3 class="font-semibold text-gray-900 dark:text-white">
+                            <a href="/search?category={{ key }}" class="hover:text-indigo-600 dark:hover:text-indigo-400">
+                                {{ category.name }}
+                            </a>
+                        </h3>
+                        <p class="text-sm text-gray-600 dark:text-gray-400">
+                            {{ category.description }}
+                        </p>
+                    </div>
+                    <div class="bg-indigo-100 dark:bg-indigo-900 text-indigo-700 dark:text-indigo-300 text-xs font-semibold px-2 py-1 rounded-full">
+                        {{ category.count }} torrents
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+</main>
+
+{% include "footer.html" %}
+{% endblock %}

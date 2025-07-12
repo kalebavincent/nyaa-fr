@@ -1,31 +1,13 @@
 version: '3.8'
-
 services:
-  torrentflow:
+  app:
     build: .
-    image: torrentflow:latest
-    container_name: torrentflow-app
-    restart: unless-stopped
     ports:
-      - "5000:5000"
-    environment:
-      - FLASK_ENV=production
-      - SECRET_KEY=your_secret_key_here
-      - DATABASE_URL=sqlite:////app/db/torrentflow.db
-      - TZ=Europe/Paris
-    volumes:
-      - ./data:/app/data
-      - ./db:/app/db
-    networks:
-      - torrentflow-net
+      - "8000:8000"
+    depends_on:
+      - redis
 
   redis:
-    image: redis:7-alpine
-    container_name: torrentflow-redis
-    restart: unless-stopped
-    networks:
-      - torrentflow-net
-
-networks:
-  torrentflow-net:
-    driver: bridge
+    image: "redis:alpine"
+    ports:
+      - "6379:6379"

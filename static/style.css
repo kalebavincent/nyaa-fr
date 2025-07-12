@@ -44,6 +44,7 @@ body {
 }
 .torrent-card i {
     padding: 5px 10px;
+    flex-direction: column;
 }
 
 .dark .torrent-card {
@@ -85,14 +86,22 @@ body {
 }
 .magnet-btn, .torrent-btn {
     transition: all 0.2s ease;
-    /* display: inline-flex; */
+    display: inline-flex;
     align-items: center;
     justify-content: center;
-    padding: 0.5rem 1rem;
+    padding: 0.4rem 0.8rem;
     border-radius: 8px;
     font-weight: 500;
     font-size: 0.875rem;
-    margin: 0 0.5rem;
+    margin: 0 0.25rem;
+    white-space: nowrap;
+}
+
+@media (min-width: 640px) {
+    .magnet-btn, .torrent-btn {
+        padding: 0.5rem 1rem;
+        margin: 0 0.5rem;
+    }
 }
 
 .skeleton-loader {
@@ -157,6 +166,24 @@ body {
     animation: fadeIn 0.5s ease-out;
 }
 
+/* Header shrink effect */
+header.shrink {
+    padding-top: 0.5rem !important;
+    padding-bottom: 0.5rem !important;
+    transition: all 0.3s ease;
+}
+
+header.shrink .logo h1 {
+    font-size: 1.5rem;
+    transition: font-size 0.3s ease;
+}
+
+header.shrink .logo i {
+    font-size: 1.5rem;
+    transition: font-size 0.3s ease;
+}
+
+/* Responsive adjustments */
 @media (max-width: 640px) {
     .torrent-card .flex-col {
         gap: 1rem;
@@ -194,6 +221,12 @@ body {
 
     .scroll-item {
         width: 280px;
+    }
+
+    /* Mobile header adjustments */
+    header:not(.shrink) {
+        padding-top: 1.5rem;
+        padding-bottom: 1.5rem;
     }
 }
 

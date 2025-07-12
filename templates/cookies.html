@@ -1,0 +1,62 @@
+{% extends "legal_base.html" %}
+{% set title = "Préférences Cookies" %}
+{% set icon = "fas fa-cookie-bite" %}
+{% set last_updated = "10 Juillet 2023" %}
+
+{% block legal_content %}
+<h2>Utilisation des cookies</h2>
+<p>Notre site utilise des cookies pour :</p>
+<ul>
+    <li>Améliorer votre expérience de navigation</li>
+    <li>Analyser le trafic</li>
+    <li>Personnaliser le contenu</li>
+    <li>Proposer des fonctionnalités de médias sociaux</li>
+</ul>
+
+<h2>Types de cookies</h2>
+<h3>Cookies essentiels</h3>
+<p>Nécessaires au fonctionnement du site (ex: connexion sécurisée)</p>
+
+<h3>Cookies de préférences</h3>
+<p>Mémorisent vos choix (langue, thème sombre/clair)</p>
+
+<h3>Cookies analytiques</h3>
+<p>Nous aident à comprendre comment vous utilisez notre site (Google Analytics)</p>
+
+<h3>Cookies de marketing</h3>
+<p>Utilisés pour afficher des publicités pertinentes (désactivés par défaut)</p>
+
+<h2>Gestion des cookies</h2>
+<p>Vous pouvez contrôler les cookies via les paramètres de votre navigateur :</p>
+<ul>
+    <li><a href="#" class="text-indigo-600 hover:underline">Chrome</a></li>
+    <li><a href="#" class="text-indigo-600 hover:underline">Firefox</a></li>
+    <li><a href="#" class="text-indigo-600 hover:underline">Safari</a></li>
+    <li><a href="#" class="text-indigo-600 hover:underline">Edge</a></li>
+</ul>
+
+<div class="bg-gray-50 dark:bg-gray-700 p-4 rounded-lg mt-6">
+    <h3 class="font-bold text-lg mb-2">Préférences actuelles</h3>
+    <div class="flex items-center justify-between">
+        <span>Cookies essentiels</span>
+        <span class="bg-green-100 text-green-800 px-2 py-1 rounded text-sm">Toujours actifs</span>
+    </div>
+    <div class="flex items-center justify-between mt-2">
+        <span>Cookies analytiques</span>
+        <label class="switch">
+            <input type="checkbox" checked>
+            <span class="slider round"></span>
+        </label>
+    </div>
+    <div class="flex items-center justify-between mt-2">
+        <span>Cookies marketing</span>
+        <label class="switch">
+            <input type="checkbox">
+            <span class="slider round"></span>
+        </label>
+    </div>
+    <button class="mt-4 bg-indigo-600 hover:bg-indigo-700 text-white py-2 px-4 rounded-lg">
+        Sauvegarder les préférences
+    </button>
+</div>
+{% endblock %}

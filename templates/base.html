@@ -7,6 +7,7 @@
 
   <!-- Tailwind CSS -->
   <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="icon" href="/favicon.ico" type="image/x-icon">
 
   <!-- Font Awesome -->
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
@@ -146,7 +147,7 @@
     function updateSubcategories() {
       const category = document.getElementById('category-select').value;
       const subSelect = document.getElementById('subcategory-select');
-      const subcategoryGroup = document.getElementById('subcategory-group'); // 🛠 ajouté ici
+      const subcategoryGroup = document.getElementById('subcategory-group');
 
       if (!subcategoryGroup) return;
 

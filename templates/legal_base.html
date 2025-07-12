@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+
+{% block content %}
+<header id="main-header" class="bg-gradient-to-r from-indigo-600 via-purple-600 to-indigo-600 py-5 shadow-xl sticky top-0 z-50 backdrop-blur-sm bg-opacity-90 transition-all duration-300">
+    <!-- Header identique à l'accueil -->
+</header>
+
+<main class="flex-grow py-8">
+    <div class="container mx-auto px-4 max-w-4xl">
+        <div class="bg-white dark:bg-gray-800 rounded-2xl shadow-xl p-6 md:p-8">
+            <div class="text-center mb-8">
+                <h1 class="text-3xl font-bold text-gray-900 dark:text-white mb-4">
+                    <i class="{{ icon }} mr-3 text-indigo-500"></i> {{ title }}
+                </h1>
+                <div class="text-gray-600 dark:text-gray-400">
+                    Dernière mise à jour : {{ last_updated }}
+                </div>
+            </div>
+
+            <div class="prose prose-indigo dark:prose-invert max-w-none">
+                {% block legal_content %}{% endblock %}
+            </div>
+        </div>
+    </div>
+</main>
+
+{% include "footer.html" %}
+{% endblock %}
