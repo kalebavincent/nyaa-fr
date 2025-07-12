@@ -1,8 +1,10 @@
+# Étape 1: Builder l'application
 FROM python:3.10-slim-bullseye as builder
 
-ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1 \
-    PIP_NO_CACHE_DIR=off
+# Variables d'environnement
+ENV PYTHONDONTWRITEBYTECODE 1
+ENV PYTHONUNBUFFERED 1
+ENV PIP_NO_CACHE_DIR=off
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
@@ -19,11 +21,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 COPY requirements.txt .
+RUN pip install --upgrade pip && \
+    pip install --user -r requirements.txt
 
-RUN pip3 install --upgrade pip && \
-    pip3 install --user -r requirements.txt && \
-    pip3 install --user python-libtorrent
-
+# Étape 2: Image finale d'exécution
 FROM python:3.10-slim-bullseye
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -41,10 +42,24 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     redis-server \
     && rm -rf /var/lib/apt/lists/*
 
+# Copie des fichiers de l'application
 WORKDIR /app
-COPY --from=builder /root/.local /root/.local
+
+# Copie des dépendances installées depuis le builder
+COPY --from=builder /usr/local/lib/python3.10/site-packages /usr/local/lib/python3.10/site-packages
+COPY --from=builder /usr/local/bin /usr/local/bin
+
+# Copie du code source
 COPY . .
 
-EXPOSE 8000 6379
+# Configuration de l'environnement
+ENV PATH=/root/.local/bin:$PATH
+ENV PYTHONPATH=/app
+ENV FLASK_APP=app.py
+ENV FLASK_ENV=production
+ENV FLASK_RUN_HOST=0.0.0.0
+ENV FLASK_RUN_PORT=5000
 
-CMD redis-server --daemonize yes && gunicorn main:app --workers 4 --worker-class uvicorn.workers.UvicornWorker --bind 0.0.0.0:8000
+# Exposition du port et commande de démarrage
+EXPOSE 5000
+CMD ["gunicorn main:app --workers 4 --worker-class uvicorn.workers.UvicornWorker --bind 0.0.0.0:8000"]
