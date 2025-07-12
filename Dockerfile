@@ -22,7 +22,7 @@ WORKDIR /app
 COPY requirements.txt .
 
 RUN pip3 install --upgrade pip && \
-    pip3 install --user -r requirements.txt
+    pip3 install -r requirements.txt
 
 FROM python:3.10-slim-bullseye
 
@@ -43,7 +43,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
-COPY --from=builder /root/.local /root/.local
+COPY --from=builder /usr/local/lib/python3.10/site-packages /usr/local/lib/python3.10/site-packages
 COPY . .
 
 EXPOSE 8000 6379
