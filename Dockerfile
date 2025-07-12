@@ -1,50 +1,23 @@
+# Étape 1: builder
 FROM python:3.10-slim-bullseye as builder
 
-ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1 \
-    PIP_NO_CACHE_DIR=off
-
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
-    libssl-dev \
-    libffi-dev \
-    libpq-dev \
-    libboost-system-dev \
-    libboost-python-dev \
-    libboost-chrono-dev \
-    libboost-random-dev \
-    python3-libtorrent \
-    git \
-    curl \
-    && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y build-essential python3-libtorrent
 
 WORKDIR /app
 COPY requirements.txt .
+RUN pip3 install --upgrade pip
+RUN pip3 install -r requirements.txt
 
-RUN pip3 install --upgrade pip && \
-    pip3 install -r requirements.txt
-
+# Étape 2: final
 FROM python:3.10-slim-bullseye
 
-ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1 \
-    PATH="/root/.local/bin:$PATH" \
-    PYTHONPATH="/app"
-
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    libpq5 \
-    curl \
-    libboost-system1.74.0 \
-    libboost-chrono1.74.0 \
-    libboost-random1.74.0 \
-    libssl1.1 \
-    python3-libtorrent \
-    redis-server \
-    && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y python3-libtorrent redis-server
 
 WORKDIR /app
 COPY --from=builder /usr/local/lib/python3.10/site-packages /usr/local/lib/python3.10/site-packages
 COPY . .
+
+ENV PATH="/usr/local/bin:$PATH"
 
 EXPOSE 8000 6379
 
