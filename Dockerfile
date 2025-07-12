@@ -2,10 +2,11 @@
 FROM python:3.10-slim-bullseye as builder
 
 # Variables d'environnement
-ENV PYTHONDONTWRITEBYTECODE 1
-ENV PYTHONUNBUFFERED 1
-ENV PIP_NO_CACHE_DIR=off
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=off
 
+# Mise à jour système et installation des dépendances système pour build libtorrent et autres libs Python
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     libssl-dev \
@@ -19,19 +20,26 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
+# Installation des dépendances Python
 WORKDIR /app
 COPY requirements.txt .
-RUN pip install --upgrade pip && \
-    pip install --user -r requirements.txt
+
+# Upgrade pip et installation avec pip3
+RUN pip3 install --upgrade pip && \
+    pip3 install --user -r requirements.txt && \
+    # Installation spécifique de python-libtorrent si nécessaire
+    pip3 install --user python-libtorrent
 
 # Étape 2: Image finale d'exécution
 FROM python:3.10-slim-bullseye
 
+# Variables d'environnement
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PATH="/root/.local/bin:$PATH" \
     PYTHONPATH="/app"
 
+# Installation des dépendances système légères et runtime pour libtorrent et redis
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libpq5 \
     curl \
@@ -44,22 +52,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Copie des fichiers de l'application
 WORKDIR /app
-
-# Copie des dépendances installées depuis le builder
-COPY --from=builder /usr/local/lib/python3.10/site-packages /usr/local/lib/python3.10/site-packages
-COPY --from=builder /usr/local/bin /usr/local/bin
-
-# Copie du code source
+COPY --from=builder /root/.local /root/.local
 COPY . .
 
-# Configuration de l'environnement
-ENV PATH=/root/.local/bin:$PATH
-ENV PYTHONPATH=/app
-ENV FLASK_APP=app.py
-ENV FLASK_ENV=production
-ENV FLASK_RUN_HOST=0.0.0.0
-ENV FLASK_RUN_PORT=5000
+# Exposition des ports
+EXPOSE 8000 6379
 
-# Exposition du port et commande de démarrage
-EXPOSE 5000
-CMD ["gunicorn main:app --workers 4 --worker-class uvicorn.workers.UvicornWorker --bind 0.0.0.0:8000"]
+# Démarrage de Redis en arrière-plan puis de l'application FastAPI avec gunicorn + uvicorn workers
+CMD redis-server --daemonize yes && gunicorn main:app --workers 4 --worker-class uvicorn.workers.UvicornWorker --bind 0.0.0.0:8000
