@@ -1,3 +1,4 @@
+import aiohttp
 import requests
 import feedparser
 from urllib.parse import quote_plus
@@ -22,8 +23,14 @@ import time
 import concurrent.futures
 import asyncio
 from config import cf, logger
+from contextlib import asynccontextmanager
 
-app = FastAPI()
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    asyncio.create_task(periodic_search_task())
+    yield
+
+app = FastAPI(lifespan=lifespan)
 
 # Configuration
 RSS_BASE_URL = cf.RSS_BASE_URL
@@ -318,7 +325,6 @@ def analyze_torrent(torrent_url: str, is_magnet: bool = False, timeout=10, infoh
     """Analyse un torrent ou magnet pour extraire les métadonnées"""
     cache_key = f"torrent_analysis:{hashlib.md5(torrent_url.encode()).hexdigest() if torrent_url else infohash}"
 
-    # Vérifier le cache Redis
     if r:
         cached = r.get(cache_key)
         if cached:
@@ -331,37 +337,35 @@ def analyze_torrent(torrent_url: str, is_magnet: bool = False, timeout=10, infoh
         ses = lt.session()
         params = {
             'save_path': tempfile.gettempdir(),
-            'storage_mode': lt.storage_mode_t(2),
+            'storage_mode': lt.storage_mode_t.storage_mode_sparse,
         }
 
         start_time = time.time()
 
         if is_magnet:
-            handle = lt.add_magnet_uri(ses, torrent_url, params)
+            params = lt.parse_magnet_uri(torrent_url)
+            params.save_path = tempfile.gettempdir()
+            params.storage_mode = lt.storage_mode_t.storage_mode_sparse
+            handle = ses.add_torrent(params)
             status = handle.status()
 
-            # Attendre les métadonnées
-            while not handle.has_metadata():
+            while not status.has_metadata:
                 if time.time() - start_time > timeout:
                     raise TimeoutError("Timeout waiting for metadata")
                 time.sleep(0.1)
                 status = handle.status()
         else:
-            # Télécharger le fichier torrent
             response = requests.get(torrent_url, headers=HEADERS, timeout=timeout)
             response.raise_for_status()
             torrent_data = lt.bdecode(response.content)
             info = lt.torrent_info(torrent_data)
-            params['ti'] = info
-            handle = ses.add_torrent(params)
+            handle = ses.add_torrent({'ti': info, 'save_path': tempfile.gettempdir()})
             status = handle.status()
 
-        # Attendre les stats des trackers
         while status.num_seeds == -1 and time.time() - start_time < timeout:
             time.sleep(0.5)
             status = handle.status()
 
-        # Préparer le résultat
         analysis = {
             "seeders": max(status.num_seeds, 0),
             "leechers": max(status.num_peers - status.num_seeds, 0),
@@ -371,9 +375,8 @@ def analyze_torrent(torrent_url: str, is_magnet: bool = False, timeout=10, infoh
             "success": status.num_seeds >= 0
         }
 
-        # Mettre en cache
         if r and analysis["success"]:
-            r.setex(cache_key, 300, json.dumps(analysis))  # Cache 5 minutes
+            r.setex(cache_key, 300, json.dumps(analysis))
 
         return analysis
     except Exception as e:
@@ -413,11 +416,11 @@ def build_nyaa_rss_url(
     query: Optional[str] = None,
     category: str = "all",
     subcategory: str = "all",
-    sort: str = "id",
-    order: str = "desc",
+    sort: str = "id",    # Ignoré pour RSS
+    order: str = "desc", # Ignoré pour RSS
     filter: str = "all"
 ):
-    """Construit l'URL du flux RSS Nyaa"""
+    """Construit l'URL du flux RSS Nyaa (sans s et o, non supportés)"""
     params = {
         "page": "rss",
     }
@@ -489,12 +492,6 @@ def build_nyaa_rss_url(
 
     if cat_id:
         params["c"] = cat_id
-
-    if sort in SORT_MAPPING:
-        params["s"] = SORT_MAPPING[sort]
-
-    if order in ORDER_MAPPING:
-        params["o"] = ORDER_MAPPING[order]
 
     if filter in FILTER_OPTIONS and filter != "all":
         params["f"] = filter
@@ -747,88 +744,82 @@ def is_site_available(url):
     except requests.exceptions.RequestException:
         return False
 
-def analyze_torrents(torrents: List[Dict], site_config: Dict):
-    """Analyse les torrents en parallèle pour extraire les stats"""
+async def analyze_torrents_async(torrents: List[Dict], site_config: Dict):
+    """Analyse les torrents en parallèle de manière asynchrone"""
     if not site_config.get("analyze", False):
         return torrents
 
-    logger.info(f"Début de l'analyse pour {len(torrents)} torrents...")
+    logger.info(f"Début de l'analyse asynchrone pour {len(torrents)} torrents...")
 
-    # Préparer les tâches d'analyse avec validation
+    # Préparer les tâches d'analyse
     analyze_tasks = []
     for torrent in torrents:
         torrent_url = torrent.get("torrent_url") or torrent.get("magnet")
 
-        # Filtrer les URLs vides ou invalides
         if not torrent_url or not torrent_url.strip():
-            logger.warning(f"URL manquante pour le torrent: {torrent.get('title')}")
             continue
 
-        # Vérifier le schéma de l'URL
         if torrent_url.startswith("magnet:") or torrent_url.startswith("http"):
-            analyze_tasks.append(torrent)
-        else:
-            logger.warning(f"URL invalide: {torrent_url}")
-
-    # Fonction pour analyser un seul torrent
-    def analyze_single(torrent):
-        try:
-            torrent_url = torrent.get("torrent_url") or torrent.get("magnet")
-
-            # Vérifier à nouveau l'URL
-            if not torrent_url or not torrent_url.strip():
-                return torrent
-
-            is_magnet = torrent_url.startswith("magnet:")
-            analysis = analyze_torrent(
+            analyze_tasks.append(analyze_single_async(
                 torrent_url,
-                is_magnet,
+                torrent_url.startswith("magnet:"),
                 ANALYZE_TIMEOUT,
-                torrent.get("infohash", "")
-            )
+                torrent.get("infohash", ""),
+                torrent  # Passer l'objet torrent pour mise à jour
+            ))
 
-            if analysis and analysis["success"]:
-                torrent["seeders"] = analysis["seeders"]
-                torrent["leechers"] = analysis["leechers"]
+    # Exécuter toutes les tâches en parallèle
+    if analyze_tasks:
+        await asyncio.gather(*analyze_tasks)
 
-                if analysis["size_bytes"] > 0 and torrent.get("size_value", 0) == 0:
-                    torrent["size"] = analysis["size_human"]
-                    torrent["size_value"] = analysis["size_bytes"] / (1024 ** 3)
-
-                if analysis["infohash"] and not torrent.get("infohash"):
-                    torrent["infohash"] = analysis["infohash"]
-
-                # Notifier les clients intéressés par cette infohash
-                asyncio.run(manager.notify_analysis_update(
-                    torrent.get("infohash", ""),
-                    {
-                        "seeders": torrent["seeders"],
-                        "leechers": torrent["leechers"],
-                        "size": torrent["size"]
-                    }
-                ))
-        except Exception as e:
-            logger.error(f"Erreur d'analyse pour {torrent.get('title')}: {str(e)}")
-        return torrent
-
-    # Exécuter en parallèle
-    with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_ANALYZE_WORKERS) as executor:
-        futures = {executor.submit(analyze_single, torrent): torrent for torrent in analyze_tasks}
-
-        for future in concurrent.futures.as_completed(futures):
-            try:
-                future.result()
-            except Exception as e:
-                logger.error(f"Erreur dans le thread d'analyse: {str(e)}")
-
-    logger.info("Analyse des torrents terminée")
+    logger.info("Analyse asynchrone des torrents terminée")
     return torrents
 
-def fetch_torrents(site: Dict, params: Dict) -> List[Dict]:
-    """Récupère les torrents d'un site avec cache Redis"""
+async def analyze_single_async(
+    torrent_url: str,
+    is_magnet: bool,
+    timeout: int,
+    infohash: str,
+    torrent: Dict
+):
+    """Analyse un seul torrent de manière asynchrone"""
+    try:
+        # Exécuter la fonction synchrone dans un thread séparé
+        analysis = await asyncio.to_thread(
+            analyze_torrent,
+            torrent_url,
+            is_magnet,
+            timeout,
+            infohash
+        )
+
+        if analysis and analysis["success"]:
+            torrent["seeders"] = analysis["seeders"]
+            torrent["leechers"] = analysis["leechers"]
+
+            if analysis["size_bytes"] > 0 and torrent.get("size_value", 0) == 0:
+                torrent["size"] = analysis["size_human"]
+                torrent["size_value"] = analysis["size_bytes"] / (1024 ** 3)
+
+            if analysis["infohash"] and not torrent.get("infohash"):
+                torrent["infohash"] = analysis["infohash"]
+
+            # Notifier les clients
+            await manager.notify_analysis_update(
+                torrent.get("infohash", ""),
+                {
+                    "seeders": torrent["seeders"],
+                    "leechers": torrent["leechers"],
+                    "size": torrent["size"]
+                }
+            )
+    except Exception as e:
+        logger.error(f"Erreur d'analyse pour {torrent.get('title')}: {str(e)}")
+
+async def fetch_torrents(site: Dict, params: Dict) -> List[Dict]:
+    """Récupère les torrents de manière asynchrone"""
     cache_key = get_cache_key(site, params)
 
-    # Tentative de récupération depuis le cache
     if r:
         cached = r.get(cache_key)
         if cached:
@@ -837,12 +828,9 @@ def fetch_torrents(site: Dict, params: Dict) -> List[Dict]:
             except json.JSONDecodeError:
                 pass
 
-    # Vérifier si le site est accessible
     if not is_site_available(site['base_url']):
-        logger.warning(f"Site {site['name']} inaccessible, utilisation du cache")
         return []
 
-    # Construction de l'URL
     rss_url = build_rss_url(
         site,
         query=params.get("query"),
@@ -854,26 +842,24 @@ def fetch_torrents(site: Dict, params: Dict) -> List[Dict]:
     )
 
     try:
-        logger.info(f"Fetching RSS feed: {rss_url}")
-        response = requests.get(rss_url, headers=HEADERS, timeout=15)
-        response.raise_for_status()
-        feed = feedparser.parse(response.content)
+        # Requête HTTP asynchrone
+        async with aiohttp.ClientSession() as session:
+            async with session.get(rss_url, headers=HEADERS, timeout=15) as response:
+                response.raise_for_status()
+                content = await response.text()
+                feed = feedparser.parse(content)
 
         torrents = [parse_entry(entry, site['type'], site) for entry in feed.entries]
 
-        # Analyse supplémentaire si activée pour ce site
-        torrents = analyze_torrents(torrents, site)
+        # Analyse asynchrone
+        torrents = await analyze_torrents_async(torrents, site)
 
-        # Mise en cache
         if r and torrents:
             r.setex(cache_key, CACHE_TIMEOUT, json.dumps(torrents))
 
         return torrents
-    except requests.exceptions.RequestException as e:
-        logger.warning(f"Erreur réseau pour {site['name']}: {str(e)}")
-        return []
     except Exception as e:
-        logger.error(f"Erreur inattendue pour {site['name']}: {str(e)}")
+        logger.error(f"Erreur pour {site['name']}: {str(e)}")
         return []
 
 def find_torrent_by_infohash(entries, infohash):
@@ -957,14 +943,15 @@ async def search_torrents(
             "filter": filter
         }
 
-        # Récupération des torrents de tous les sites sélectionnés
+        tasks = [fetch_torrents(site_data, search_params) for site_data in sites_to_search]
+
+        results = await asyncio.gather(*tasks)
+
         all_torrents = []
-        for site_data in sites_to_search:
-            site_torrents = fetch_torrents(site_data, search_params)
+        for site_torrents in results:
             if site_torrents:
                 all_torrents.extend(site_torrents)
 
-        # Si aucun résultat n'est trouvé
         if not all_torrents:
             logger.info("Aucun torrent trouvé pour la recherche")
             return templates.TemplateResponse("results.html", {
@@ -1042,6 +1029,7 @@ async def search_torrents(
             "base_uri": BASE_URI
         })
 
+
 @app.get("/details/{infohash}", response_class=HTMLResponse)
 async def torrent_details(request: Request, infohash: str):
     try:
@@ -1068,25 +1056,30 @@ async def torrent_details(request: Request, infohash: str):
             return RedirectResponse("/", status_code=303)
 
         # Analyse supplémentaire si nécessaire
-        if (torrent.get("seeders", 0) == 0 or torrent.get("size_value", 0) == 0) and \
-           (torrent.get("torrent_url") or torrent.get("magnet")):
-            try:
-                torrent_url = torrent.get("torrent_url", torrent.get("magnet"))
-                is_magnet = torrent_url.startswith("magnet:")
-                analysis = analyze_torrent(torrent_url, is_magnet, ANALYZE_TIMEOUT, torrent.get("infohash", ""))
+        if (torrent.get("seeders", 0) == 0 or torrent.get("size_value", 0) == 0):
+            torrent_url = torrent.get("torrent_url", torrent.get("magnet"))
+            if torrent_url:
+                try:
+                    analysis = await asyncio.to_thread(
+                        analyze_torrent,
+                        torrent_url,
+                        torrent_url.startswith("magnet:"),
+                        ANALYZE_TIMEOUT,
+                        torrent.get("infohash", "")
+                    )
 
-                if analysis and analysis["success"]:
-                    torrent["seeders"] = analysis.get("seeders", torrent.get("seeders", 0))
-                    torrent["leechers"] = analysis.get("leechers", torrent.get("leechers", 0))
+                    if analysis and analysis["success"]:
+                        torrent["seeders"] = analysis.get("seeders", torrent.get("seeders", 0))
+                        torrent["leechers"] = analysis.get("leechers", torrent.get("leechers", 0))
 
-                    if analysis["size_bytes"] > 0:
-                        torrent["size"] = analysis.get("size_human", torrent.get("size", "0 GB"))
-                        torrent["size_value"] = analysis["size_bytes"] / (1024 ** 3)
+                        if analysis["size_bytes"] > 0:
+                            torrent["size"] = analysis.get("size_human", torrent.get("size", "0 GB"))
+                            torrent["size_value"] = analysis["size_bytes"] / (1024 ** 3)
 
-                    if analysis["infohash"] and not torrent.get("infohash"):
-                        torrent["infohash"] = analysis["infohash"]
-            except Exception as e:
-                logger.error(f"Erreur d'analyse pour les détails: {str(e)}")
+                        if analysis["infohash"] and not torrent.get("infohash"):
+                            torrent["infohash"] = analysis["infohash"]
+                except Exception as e:
+                    logger.error(f"Erreur d'analyse pour les détails: {str(e)}")
 
         return templates.TemplateResponse("details.html", {
             "request": request,
@@ -1198,7 +1191,6 @@ async def terms_of_service(request: Request):
         "base_uri": BASE_URI
     })
 
-# WebSocket pour les mises à jour en temps réel
 @app.websocket("/ws/{client_id}")
 async def websocket_endpoint(websocket: WebSocket, client_id: str):
     await manager.connect(websocket, client_id)
@@ -1217,31 +1209,27 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
     except WebSocketDisconnect:
         manager.disconnect(client_id)
 
-# Tâche périodique pour les nouvelles recherches
 async def periodic_search_task():
     while True:
-        await asyncio.sleep(300)  # Toutes les 5 minutes
+        try:
+            await asyncio.sleep(300)
 
-        # Recherche des torrents populaires
-        search_params = {
-            "sort": "seeders",
-            "order": "desc",
-            "filter": "trusted"
-        }
+            search_params = {"sort": "seeders", "order": "desc", "filter": "trusted"}
 
-        for site_id, site_data in SITES.items():
-            torrents = fetch_torrents(site_data, search_params)
-            if torrents:
-                # Créer une clé unique pour cette recherche
-                search_key = f"top_{site_id}"
-                await manager.notify_new_torrents(search_key, torrents[:10])
+            for site_id, site_data in SITES.items():
+                try:
+                    torrents = await fetch_torrents(site_data, search_params)
+                    if torrents:
+                        search_key = f"top_{site_id}"
+                        await manager.notify_new_torrents(search_key, torrents[:10])
+                except Exception as e:
+                    logger.error(f"Erreur site {site_id}: {str(e)}")
 
-        logger.info("Mise à jour périodique des torrents populaires envoyée")
+            logger.info("Mise à jour périodique terminée")
 
-# Démarrer la tâche périodique au démarrage de l'app
-@app.on_event("startup")
-async def startup_event():
-    asyncio.create_task(periodic_search_task())
+        except Exception as e:
+            logger.error(f"Erreur tâche périodique: {str(e)}")
+            await asyncio.sleep(60)
 
 if __name__ == "__main__":
     import uvicorn
