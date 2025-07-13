@@ -1,7 +1,7 @@
 import requests
 import feedparser
 from urllib.parse import quote_plus
-from fastapi import FastAPI, Request, Query, HTTPException
+from fastapi import FastAPI, Request, Query, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
@@ -20,6 +20,7 @@ import libtorrent as lt
 import tempfile
 import time
 import concurrent.futures
+import asyncio
 from config import cf, logger
 
 app = FastAPI()
@@ -67,6 +68,80 @@ HEADERS = {
 
 app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
+
+# Gestionnaire de connexions WebSocket
+class ConnectionManager:
+    def __init__(self):
+        self.active_connections: Dict[str, WebSocket] = {}
+        self.analysis_listeners: Dict[str, List[WebSocket]] = {}
+        self.search_listeners: Dict[str, List[WebSocket]] = {}
+
+    async def connect(self, websocket: WebSocket, client_id: str):
+        await websocket.accept()
+        self.active_connections[client_id] = websocket
+        logger.info(f"Client connecté: {client_id}")
+
+    def disconnect(self, client_id: str):
+        if client_id in self.active_connections:
+            del self.active_connections[client_id]
+            # Retirer des groupes d'écoute
+            for key in list(self.analysis_listeners.keys()):
+                if client_id in self.analysis_listeners[key]:
+                    self.analysis_listeners[key].remove(client_id)
+            for key in list(self.search_listeners.keys()):
+                if client_id in self.search_listeners[key]:
+                    self.search_listeners[key].remove(client_id)
+            logger.info(f"Client déconnecté: {client_id}")
+
+    async def send_personal_message(self, message: Dict, client_id: str):
+        if client_id in self.active_connections:
+            try:
+                await self.active_connections[client_id].send_json(message)
+            except WebSocketDisconnect:
+                self.disconnect(client_id)
+
+    async def broadcast(self, message: Dict):
+        for client_id, websocket in self.active_connections.items():
+            try:
+                await websocket.send_json(message)
+            except WebSocketDisconnect:
+                self.disconnect(client_id)
+
+    def add_analysis_listener(self, infohash: str, websocket: WebSocket, client_id: str):
+        if infohash not in self.analysis_listeners:
+            self.analysis_listeners[infohash] = []
+        if client_id not in self.analysis_listeners[infohash]:
+            self.analysis_listeners[infohash].append(client_id)
+        logger.info(f"Écouteur ajouté pour {infohash}: {client_id}")
+
+    def add_search_listener(self, search_key: str, websocket: WebSocket, client_id: str):
+        if search_key not in self.search_listeners:
+            self.search_listeners[search_key] = []
+        if client_id not in self.search_listeners[search_key]:
+            self.search_listeners[search_key].append(client_id)
+        logger.info(f"Écouteur de recherche ajouté pour {search_key}: {client_id}")
+
+    async def notify_analysis_update(self, infohash: str, analysis: Dict):
+        if infohash in self.analysis_listeners:
+            message = {
+                "type": "analysis_update",
+                "infohash": infohash,
+                "analysis": analysis
+            }
+            for client_id in self.analysis_listeners[infohash]:
+                await self.send_personal_message(message, client_id)
+
+    async def notify_new_torrents(self, search_key: str, torrents: List[Dict]):
+        if search_key in self.search_listeners:
+            message = {
+                "type": "new_torrents",
+                "search_key": search_key,
+                "torrents": torrents
+            }
+            for client_id in self.search_listeners[search_key]:
+                await self.send_personal_message(message, client_id)
+
+manager = ConnectionManager()
 
 @app.get("/favicon.ico", include_in_schema=False)
 async def favicon():
@@ -239,9 +314,9 @@ def format_size(size_bytes):
 
     return f"{size_bytes:.2f} {units[unit_index]}"
 
-def analyze_torrent(torrent_url: str, is_magnet: bool = False, timeout=10):
+def analyze_torrent(torrent_url: str, is_magnet: bool = False, timeout=10, infohash: str = ""):
     """Analyse un torrent ou magnet pour extraire les métadonnées"""
-    cache_key = f"torrent_analysis:{hashlib.md5(torrent_url.encode()).hexdigest()}"
+    cache_key = f"torrent_analysis:{hashlib.md5(torrent_url.encode()).hexdigest() if torrent_url else infohash}"
 
     # Vérifier le cache Redis
     if r:
@@ -313,7 +388,8 @@ def analyze_torrent(torrent_url: str, is_magnet: bool = False, timeout=10):
         }
     finally:
         try:
-            ses.remove_torrent(handle)
+            if 'handle' in locals():
+                ses.remove_torrent(handle)
         except:
             pass
 
@@ -704,7 +780,12 @@ def analyze_torrents(torrents: List[Dict], site_config: Dict):
                 return torrent
 
             is_magnet = torrent_url.startswith("magnet:")
-            analysis = analyze_torrent(torrent_url, is_magnet, ANALYZE_TIMEOUT)
+            analysis = analyze_torrent(
+                torrent_url,
+                is_magnet,
+                ANALYZE_TIMEOUT,
+                torrent.get("infohash", "")
+            )
 
             if analysis and analysis["success"]:
                 torrent["seeders"] = analysis["seeders"]
@@ -716,6 +797,16 @@ def analyze_torrents(torrents: List[Dict], site_config: Dict):
 
                 if analysis["infohash"] and not torrent.get("infohash"):
                     torrent["infohash"] = analysis["infohash"]
+
+                # Notifier les clients intéressés par cette infohash
+                asyncio.run(manager.notify_analysis_update(
+                    torrent.get("infohash", ""),
+                    {
+                        "seeders": torrent["seeders"],
+                        "leechers": torrent["leechers"],
+                        "size": torrent["size"]
+                    }
+                ))
         except Exception as e:
             logger.error(f"Erreur d'analyse pour {torrent.get('title')}: {str(e)}")
         return torrent
@@ -982,7 +1073,7 @@ async def torrent_details(request: Request, infohash: str):
             try:
                 torrent_url = torrent.get("torrent_url", torrent.get("magnet"))
                 is_magnet = torrent_url.startswith("magnet:")
-                analysis = analyze_torrent(torrent_url, is_magnet, ANALYZE_TIMEOUT)
+                analysis = analyze_torrent(torrent_url, is_magnet, ANALYZE_TIMEOUT, torrent.get("infohash", ""))
 
                 if analysis and analysis["success"]:
                     torrent["seeders"] = analysis.get("seeders", torrent.get("seeders", 0))
@@ -1000,7 +1091,7 @@ async def torrent_details(request: Request, infohash: str):
         return templates.TemplateResponse("details.html", {
             "request": request,
             "torrent": torrent,
-            "categories": CATEGORIES,  # Ajouté
+            "categories": CATEGORIES,
             "dark_mode": request.cookies.get("dark_mode", "true") == "true",
             "base_uri": BASE_URI
         })
@@ -1041,7 +1132,7 @@ async def top_torrents_page(request: Request):
     return templates.TemplateResponse("top_torrents.html", {
         "request": request,
         "top_torrents": top_torrents[:50],  # Limiter à 50 résultats
-        "categories": CATEGORIES,  # Ajouté
+        "categories": CATEGORIES,
         "dark_mode": request.cookies.get("dark_mode", "true") == "true",
         "base_uri": BASE_URI
     })
@@ -1051,7 +1142,7 @@ async def applications_page(request: Request):
     """Page des applications"""
     return templates.TemplateResponse("applications.html", {
         "request": request,
-        "categories": CATEGORIES,  # Ajouté
+        "categories": CATEGORIES,
         "dark_mode": request.cookies.get("dark_mode", "true") == "true",
         "base_uri": BASE_URI
     })
@@ -1062,7 +1153,7 @@ async def legal_mentions(request: Request):
     """Page des mentions légales"""
     return templates.TemplateResponse("mentions_legales.html", {
         "request": request,
-        "categories": CATEGORIES,  # Ajouté
+        "categories": CATEGORIES,
         "dark_mode": request.cookies.get("dark_mode", "true") == "true",
         "base_uri": BASE_URI
     })
@@ -1072,7 +1163,7 @@ async def privacy_policy(request: Request):
     """Page de politique de confidentialité"""
     return templates.TemplateResponse("politique_confidentialite.html", {
         "request": request,
-        "categories": CATEGORIES,  # Ajouté
+        "categories": CATEGORIES,
         "dark_mode": request.cookies.get("dark_mode", "true") == "true",
         "base_uri": BASE_URI
     })
@@ -1082,7 +1173,7 @@ async def cookies_policy(request: Request):
     """Page de préférences cookies"""
     return templates.TemplateResponse("cookies.html", {
         "request": request,
-        "categories": CATEGORIES,  # Ajouté
+        "categories": CATEGORIES,
         "dark_mode": request.cookies.get("dark_mode", "true") == "true",
         "base_uri": BASE_URI
     })
@@ -1092,7 +1183,7 @@ async def dmca_policy(request: Request):
     """Page DMCA"""
     return templates.TemplateResponse("dmca.html", {
         "request": request,
-        "categories": CATEGORIES,  # Ajouté
+        "categories": CATEGORIES,
         "dark_mode": request.cookies.get("dark_mode", "true") == "true",
         "base_uri": BASE_URI
     })
@@ -1102,10 +1193,55 @@ async def terms_of_service(request: Request):
     """Page des conditions d'utilisation"""
     return templates.TemplateResponse("conditions_utilisation.html", {
         "request": request,
-        "categories": CATEGORIES,  # Ajouté
+        "categories": CATEGORIES,
         "dark_mode": request.cookies.get("dark_mode", "true") == "true",
         "base_uri": BASE_URI
     })
+
+# WebSocket pour les mises à jour en temps réel
+@app.websocket("/ws/{client_id}")
+async def websocket_endpoint(websocket: WebSocket, client_id: str):
+    await manager.connect(websocket, client_id)
+    try:
+        while True:
+            data = await websocket.receive_json()
+            # Gestion des différents types de messages
+            if data["type"] == "register_analysis":
+                infohash = data["infohash"]
+                manager.add_analysis_listener(infohash, websocket, client_id)
+
+            elif data["type"] == "register_search":
+                search_key = data["search_key"]
+                manager.add_search_listener(search_key, websocket, client_id)
+
+    except WebSocketDisconnect:
+        manager.disconnect(client_id)
+
+# Tâche périodique pour les nouvelles recherches
+async def periodic_search_task():
+    while True:
+        await asyncio.sleep(300)  # Toutes les 5 minutes
+
+        # Recherche des torrents populaires
+        search_params = {
+            "sort": "seeders",
+            "order": "desc",
+            "filter": "trusted"
+        }
+
+        for site_id, site_data in SITES.items():
+            torrents = fetch_torrents(site_data, search_params)
+            if torrents:
+                # Créer une clé unique pour cette recherche
+                search_key = f"top_{site_id}"
+                await manager.notify_new_torrents(search_key, torrents[:10])
+
+        logger.info("Mise à jour périodique des torrents populaires envoyée")
+
+# Démarrer la tâche périodique au démarrage de l'app
+@app.on_event("startup")
+async def startup_event():
+    asyncio.create_task(periodic_search_task())
 
 if __name__ == "__main__":
     import uvicorn
