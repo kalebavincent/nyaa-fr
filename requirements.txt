@@ -1,5 +1,6 @@
 gunicorn==21.2.0
 fastapi==0.109.0
+libtorrent>=2.0.0
 uvicorn==0.25.0
 redis==5.0.1
 feedparser==6.0.11
