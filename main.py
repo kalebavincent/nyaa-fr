@@ -1112,19 +1112,21 @@ async def categories_page(request: Request):
 @app.get("/top", response_class=HTMLResponse)
 async def top_torrents_page(request: Request):
     """Page des torrents populaires"""
-    # Récupérer les torrents les plus populaires
+
     top_torrents = []
     for site_data in SITES.values():
         site_torrents = fetch_torrents(site_data, {"sort": "seeders", "order": "desc"})
-        if site_torrents:
-            top_torrents.extend(site_torrents[:20])  # Prendre les 20 premiers par site
 
-    # Trier par seeders
+        if isinstance(site_torrents, list):
+            top_torrents.extend(site_torrents[:20])
+        else:
+            logger.warning(f"Aucun résultat ou type inattendu pour le site {site_data['name']}")
+
     top_torrents.sort(key=lambda x: x.get("seeders", 0), reverse=True)
 
     return templates.TemplateResponse("top_torrents.html", {
         "request": request,
-        "top_torrents": top_torrents[:50],  # Limiter à 50 résultats
+        "top_torrents": top_torrents[:50], 
         "categories": CATEGORIES,
         "dark_mode": request.cookies.get("dark_mode", "true") == "true",
         "base_uri": BASE_URI
