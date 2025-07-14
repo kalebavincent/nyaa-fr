@@ -168,14 +168,14 @@ SITES = {
         "base_url": "https://subsplease.org",
         "rss_url": "https://subsplease.org/rss/",
         "type": "generic",
-        "analyze": True
+        "analyze": False
     },
     "animetosho": {
         "name": "AnimeTosho",
         "base_url": "https://animetosho.org",
         "rss_url": "https://feed.animetosho.org/rss2?only_tor=1",
         "type": "animetosho",
-        "analyze": True
+        "analyze": False
     }
 }
 
