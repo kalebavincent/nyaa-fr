@@ -1115,7 +1115,7 @@ async def top_torrents_page(request: Request):
 
     top_torrents = []
     for site_data in SITES.values():
-        site_torrents = fetch_torrents(site_data, {"sort": "seeders", "order": "desc"})
+        site_torrents = await fetch_torrents(site_data, {"sort": "seeders", "order": "desc"})
 
         if isinstance(site_torrents, list):
             top_torrents.extend(site_torrents[:20])
@@ -1126,7 +1126,7 @@ async def top_torrents_page(request: Request):
 
     return templates.TemplateResponse("top_torrents.html", {
         "request": request,
-        "top_torrents": top_torrents[:50], 
+        "top_torrents": top_torrents[:50],
         "categories": CATEGORIES,
         "dark_mode": request.cookies.get("dark_mode", "true") == "true",
         "base_uri": BASE_URI
